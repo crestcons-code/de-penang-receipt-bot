@@ -209,6 +209,12 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
     df_rows = pd.DataFrame(rows)
     df_rows["Post"] = st.session_state.post_all
 
+    # Build options list that includes any GL codes from the data not already in GL_OPTIONS
+    all_gl_options = list(GL_OPTIONS.keys())
+    for gl_val in df_rows["GL Account"].dropna().unique():
+        if gl_val not in GL_OPTIONS:
+            all_gl_options.append(gl_val)
+
     edited = st.data_editor(
         df_rows,
         column_config={
@@ -216,7 +222,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
             "OR Number":        st.column_config.TextColumn("OR Number", disabled=True),
             "Date":             st.column_config.TextColumn("Date", disabled=True),
             "Donor Name":       st.column_config.TextColumn("Donor Name"),
-            "GL Account":       st.column_config.SelectboxColumn("GL Account", options=list(GL_OPTIONS.keys())),
+            "GL Account":       st.column_config.SelectboxColumn("GL Account", options=all_gl_options),
             "Description":      st.column_config.TextColumn("Description (in Autocount)"),
             "Department":       st.column_config.TextColumn("Department"),
             "Amount (RM)":      st.column_config.NumberColumn("Amount (RM)", format="RM %.2f", disabled=True),
