@@ -152,7 +152,7 @@ def load_dana_list(file) -> pd.DataFrame:
         # Description — always from Dana description column (col I), first line only
         # Falls back to GL short desc only if col I is completely blank
         raw_desc = str(r[col_desc]).strip() if pd.notna(r[col_desc]) else ""
-        description = raw_desc.splitlines()[0].strip()
+        description = raw_desc.splitlines()[0].strip() if raw_desc else ""
 
         # If GL not pre-filled, auto-map from transaction text
         if not gl_code:
