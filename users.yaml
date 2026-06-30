@@ -1,0 +1,5 @@
+usernames:
+  crestcons:
+    name: Crestcons
+    password: "$2b$12$q2OCd1uWqcXqgdmbTv7RweXAXB.ZZWbuf4ecghOr8Iw2Y8ZGY4HKy"
+    role: admin
