@@ -500,6 +500,7 @@ with tab_dana:
             posted_or_numbers.add(base)
 
         rows = []
+        skipped_rows = []
         skipped_count = 0
         seq = next_seq
         for _, txn in df_dana.iterrows():
@@ -509,11 +510,17 @@ with tab_dana:
             # Skip if pre-filled OR number already exists in Autocount
             if txn["or_number"] and txn["or_number"] in posted_or_numbers:
                 skipped_count += 1
+                skipped_rows.append({"OR Number": txn["or_number"], "Date": txn_date,
+                                     "Donor": txn["donor_name"], "Amount (RM)": amount,
+                                     "Reason": "OR number already in Autocount"})
                 continue
 
             # Skip if no OR number and date+amount already posted
             if not txn["or_number"] and (txn_date, amount) in posted_keys:
                 skipped_count += 1
+                skipped_rows.append({"OR Number": "(none)", "Date": txn_date,
+                                     "Donor": txn["donor_name"], "Amount (RM)": amount,
+                                     "Reason": "Same date & amount already in Autocount"})
                 continue
 
             # Use pre-filled OR number or auto-assign
@@ -535,6 +542,11 @@ with tab_dana:
                 "Amount (RM)":    amount,
                 "WhatsApp Mobile": txn.get("mobile", ""),
             })
+
+        if skipped_rows:
+            with st.expander(f"ℹ️ {skipped_count} row(s) skipped — already in Autocount (click to view)"):
+                st.dataframe(pd.DataFrame(skipped_rows), use_container_width=True, hide_index=True)
+                st.caption("If any of these show 'OR number already in Autocount' but you believe they failed, please verify directly in Autocount before re-posting to avoid duplicates.")
 
         render_review_and_post(rows, skipped_count)
 
