@@ -1,7 +1,7 @@
 # app.py -- Autocount Donation Receipt Web App
 # Run with: python -m streamlit run app.py
 
-import sys, io, re
+import sys, io, re, time
 import streamlit as st
 import pandas as pd
 import streamlit_authenticator as stauth
@@ -270,29 +270,44 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
 
             status_box.info(f"Posting {i+1}/{len(to_post)}: {donor} - RM{amount:.2f}")
 
-            try:
-                result = client.create_donation_receipt(
-                    receipt_date=date,
-                    amount=amount,
-                    bank_gl_code=MAYBANK_GL_CODE,
-                    donation_gl_code=gl_code,
-                    donor_name=donor,
-                    payment_method=DEFAULT_PAYMENT_METHOD,
-                    description=desc,
-                    department=dept,
-                    doc_no=or_no,
-                )
-                doc_no = result.get("docNo") or result.get("DocNo") or "posted"
-                results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
-                                "Description": desc, "Doc No": doc_no, "Date": date,
-                                "WhatsApp": str(row.get("WhatsApp Mobile", "")).strip(),
-                                "Status": "success", "Notes": ""})
-            except Exception as e:
+            # Retry up to 3 times on HTTP 429 (rate limit) with increasing wait
+            last_err = None
+            for attempt in range(3):
+                try:
+                    result = client.create_donation_receipt(
+                        receipt_date=date,
+                        amount=amount,
+                        bank_gl_code=MAYBANK_GL_CODE,
+                        donation_gl_code=gl_code,
+                        donor_name=donor,
+                        payment_method=DEFAULT_PAYMENT_METHOD,
+                        description=desc,
+                        department=dept,
+                        doc_no=or_no,
+                    )
+                    doc_no = result.get("docNo") or result.get("DocNo") or "posted"
+                    results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
+                                    "Description": desc, "Doc No": doc_no, "Date": date,
+                                    "WhatsApp": str(row.get("WhatsApp Mobile", "")).strip(),
+                                    "Status": "success", "Notes": ""})
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+                    if "429" in str(e):
+                        wait = 5 * (attempt + 1)   # 5s, 10s, 15s
+                        status_box.warning(f"Rate limited — waiting {wait}s before retry ({attempt+1}/3)...")
+                        time.sleep(wait)
+                    else:
+                        break   # non-429 error, don't retry
+
+            if last_err is not None:
                 results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
                                 "Description": desc, "Doc No": None, "Date": date,
                                 "WhatsApp": str(row.get("WhatsApp Mobile", "")).strip(),
-                                "Status": "error", "Notes": str(e)})
+                                "Status": "error", "Notes": str(last_err)})
 
+            time.sleep(0.3)   # small pause between every call to avoid triggering rate limit
             progress.progress((i + 1) / len(to_post))
 
         status_box.empty()
