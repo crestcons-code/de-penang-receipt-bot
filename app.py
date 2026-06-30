@@ -145,20 +145,20 @@ def load_dana_list(file) -> pd.DataFrame:
             gl_code = ""
         gl_code = gl_code.splitlines()[0].strip() if gl_code else ""
 
-        # Description (first line only, strip extra whitespace)
+        # Description — always from Dana description column (col I), first line only
+        # Falls back to GL short desc only if col I is completely blank
         raw_desc = str(r[col_desc]).strip() if pd.notna(r[col_desc]) else ""
-        description = raw_desc.split("\n")[0].strip()
+        description = raw_desc.splitlines()[0].strip()
 
-        # If GL not pre-filled, auto-map from description text
+        # If GL not pre-filled, auto-map from transaction text
         if not gl_code:
-            combined = f"{r[col_date]} {r.get(df.columns[1], '')} {r.get(df.columns[2], '')} {donor}"
+            combined = f"{r.get(df.columns[1], '')} {r.get(df.columns[2], '')} {donor}"
             gl_code, _, auto_desc = map_to_gl(combined)
             if not description:
                 description = auto_desc
 
-        short_desc = GL_SHORT_DESC.get(gl_code, description or "General Donation")
         if not description:
-            description = short_desc
+            description = GL_SHORT_DESC.get(gl_code, "General Donation")
 
         mobile = str(r[col_mobile]).strip() if pd.notna(r[col_mobile]) else ""
         if mobile.lower() in ("nan", "none"):
