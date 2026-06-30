@@ -13,10 +13,10 @@ from config_loader import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD
 
 st.set_page_config(page_title="DE Penang Autocount Donation Receipts Apps", page_icon="ðŸ¦", layout="wide")
 
-# â”€â”€ GL code options for dropdown
+# â"€â"€ GL code options for dropdown
 GL_OPTIONS = {f"{code}  {desc}": code for code, desc, _ in DONATION_MAP}
 
-# Reverse lookup: GL code â†’ short description
+# Reverse lookup: GL code â†' short description
 GL_SHORT_DESC = {code: desc for code, desc, _ in DONATION_MAP}
 
 
@@ -118,20 +118,20 @@ def load_dana_list(file) -> pd.DataFrame:
 def render_review_and_post(rows: list, skipped_count: int = 0):
     """Render the shared Step 2 review table and Step 3 post section."""
     if skipped_count:
-        st.warning(f”{skipped_count} transaction(s) already recorded in Autocount - excluded from this review.”)
+        st.warning(f"{skipped_count} transaction(s) already recorded in Autocount - excluded from this review.")
 
     if not rows:
         st.info("No new transactions to post.")
         return
 
-    # âœ” / âœ˜ buttons
+    # âœ" / âœ˜ buttons
     if "post_all" not in st.session_state:
         st.session_state.post_all = True
 
     btn_col, spacer = st.columns([1, 15])
     with btn_col:
         b1, b2 = st.columns(2)
-        if b1.button("âœ”", help="Tick All", use_container_width=True):
+        if b1.button("âœ"", help="Tick All", use_container_width=True):
             st.session_state.post_all = True
             st.rerun()
         if b2.button("âœ˜", help="Untick All", use_container_width=True):
@@ -170,8 +170,8 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
               delta=f"{total_all - total_sel:,.2f} excluded" if total_all != total_sel else None)
     st.divider()
 
-    # â”€â”€ Step 3: Post to Autocount
-    st.subheader(“Step 3 - Post to Autocount”)
+    # â"€â"€ Step 3: Post to Autocount
+    st.subheader("Step 3 - Post to Autocount")
 
     if len(to_post) == 0:
         st.warning("No rows selected. Tick at least one row to post.")
@@ -194,7 +194,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
             if dept.lower() in ("nan", "none", "-"):
                 dept = ""
 
-            status_box.info(f”Posting {i+1}/{len(to_post)}: {donor} - RM{amount:.2f}”)
+            status_box.info(f"Posting {i+1}/{len(to_post)}: {donor} - RM{amount:.2f}")
 
             try:
                 result = client.create_donation_receipt(
@@ -244,7 +244,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 st.title("DE Penang Autocount Donation Receipts Apps")
 st.caption("Persatuan Dhamma Malaysia (Malaysia Dhamma Society - Penang Branch)")
 st.divider()
@@ -255,7 +255,7 @@ tab_bank, tab_dana, tab_recon = st.tabs(["Upload Bank Statement (CSV/PDF)", "Upl
 # TAB 1 - Bank Statement
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 with tab_bank:
-    st.subheader(“Step 1 - Upload Maybank Statement”)
+    st.subheader("Step 1 - Upload Maybank Statement")
     uploaded = st.file_uploader("Upload Maybank CSV or PDF statement", type=["csv", "pdf"], key="bank_upload")
 
     if uploaded:
@@ -275,7 +275,7 @@ with tab_bank:
         st.success(f"Found **{len(df_raw)} incoming payment(s)** totalling **RM {df_raw['credit'].sum():,.2f}**")
         st.divider()
 
-        st.subheader(“Step 2 - Review & Edit Before Posting”)
+        st.subheader("Step 2 - Review & Edit Before Posting")
         st.info("Check each row. Change GL Account or Description if needed. Uncheck rows you want to skip.")
 
         with st.spinner("Checking Autocount for existing records and last OR number..."):
@@ -325,7 +325,7 @@ with tab_bank:
 # TAB 2 - Dana List Excel
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 with tab_dana:
-    st.subheader(“Step 1 - Upload Dana List Excel”)
+    st.subheader("Step 1 - Upload Dana List Excel")
     st.caption("Upload the monthly dana list Excel file (e.g. DEPG Dana list 2026 June.xlsx)")
     dana_file = st.file_uploader("Upload Dana List Excel", type=["xlsx"], key="dana_upload")
 
@@ -346,7 +346,7 @@ with tab_dana:
             st.info(f"{pre_filled} rows have OR numbers pre-assigned. {needs_or} row(s) will be auto-numbered.")
 
         st.divider()
-        st.subheader(“Step 2 - Review & Edit Before Posting”)
+        st.subheader("Step 2 - Review & Edit Before Posting")
         st.info("Check each row. Change GL Account or Description if needed. Uncheck rows you want to skip.")
 
         # Auto-assign OR numbers only for rows that don't have one
@@ -373,7 +373,7 @@ with tab_dana:
         for p in posted:
             doc = p["docNo"]
             posted_or_numbers.add(doc)
-            # Add base number: OR-2606153-1 â†’ also add OR-2606153
+            # Add base number: OR-2606153-1 â†' also add OR-2606153
             import re as _re
             base = _re.sub(r"-\d+$", "", doc)
             posted_or_numbers.add(base)
@@ -424,7 +424,7 @@ with tab_dana:
 # TAB 3 - Reconciliation
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 with tab_recon:
-    st.subheader(“Reconciliation - Dana List / Bank Statement vs Autocount”)
+    st.subheader("Reconciliation - Dana List / Bank Statement vs Autocount")
     st.caption("Verify every donation has been recorded in Autocount.")
 
     recon_source = st.radio("Reconcile using:", ["Dana List (Excel)", "Bank Statement (CSV)"], horizontal=True)
@@ -457,7 +457,7 @@ with tab_recon:
 | **Found (by date+amount)** | No OR number on this row, but a record with the same date and amount was found in Autocount. Likely already posted. |
 | **MISSING** | This donation cannot be found in Autocount - it may have been skipped or not yet posted. Action required. |
 
-**Colour guide:** ðŸŸ¢ Green = Found &nbsp;&nbsp; ðŸ”´ Red = Missing
+**Colour guide:** ðŸŸ¢ Green = Found &nbsp;&nbsp; ðŸ"´ Red = Missing
             """)
 
         filter_opt = st.radio("Show:", ["All", "Missing only", "Found only"], horizontal=True, key="recon_filter")
@@ -496,7 +496,7 @@ with tab_recon:
             ac_by_date_amount.setdefault(key, []).append(p["docNo"])
         return ac_or_numbers, ac_by_date_amount
 
-    # â”€â”€ Dana List reconciliation
+    # â"€â"€ Dana List reconciliation
     if recon_source == "Dana List (Excel)":
         recon_file = st.file_uploader("Upload Dana List Excel", type=["xlsx"], key="recon_dana_upload")
 
@@ -542,7 +542,7 @@ with tab_recon:
         else:
             st.info("Upload the monthly dana list Excel file to run the reconciliation check.")
 
-    # â”€â”€ Bank Statement reconciliation
+    # â"€â"€ Bank Statement reconciliation
     else:
         recon_csv = st.file_uploader("Upload Maybank Bank Statement CSV", type=["csv"], key="recon_bank_upload")
 
