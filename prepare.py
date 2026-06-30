@@ -31,7 +31,7 @@ def prepare(statement_file: str):
     to_date   = transactions["date"].max().strftime("%Y-%m-%d")
     print(f"Checking Autocount for existing OR records ({from_date} to {to_date})...")
     posted = client.get_posted_receipts(from_date, to_date)
-    # Build a lookup set: (date, amount) — amount is most reliable unique key per day
+    # Build a lookup set: (date, amount) - amount is most reliable unique key per day
     posted_keys = set()
     for p in posted:
         posted_keys.add((p["date"], p["amount"]))
@@ -50,7 +50,7 @@ def prepare(statement_file: str):
         next_seq = 1
     print(f"Last OR: {last_or or 'none'}  ->  next will start at {prefix}{next_seq:03d}\n")
 
-    # Build review rows — skip already-posted transactions
+    # Build review rows - skip already-posted transactions
     rows = []
     skipped = []
     seq = next_seq
@@ -137,7 +137,7 @@ def prepare(statement_file: str):
     print(f"  {out_path}\n")
     print("Instructions:")
     print("  1. Open the file in Excel")
-    print("  2. Check each row — correct GL Account Code if needed")
+    print("  2. Check each row - correct GL Account Code if needed")
     print("  3. Set 'Post (YES/NO)' to NO for any row you want to skip")
     print("  4. Save the file")
     print(f"  5. Run:  python main.py \"{out_path}\"")

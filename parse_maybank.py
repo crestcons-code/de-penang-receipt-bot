@@ -1,4 +1,4 @@
-# parse_maybank.py — reads Maybank CSV or PDF bank statement
+# parse_maybank.py - reads Maybank CSV or PDF bank statement
 
 import pandas as pd
 import pdfplumber
@@ -30,7 +30,7 @@ def parse_csv(filepath: str) -> pd.DataFrame:
     for col in df.columns:
         df[col] = df[col].astype(str).str.strip()
 
-    # Parse amount — remove "RM " prefix and commas
+    # Parse amount - remove "RM " prefix and commas
     df["credit"] = (
         df["credit"]
         .str.replace("RM", "", regex=False)
@@ -49,7 +49,7 @@ def parse_csv(filepath: str) -> pd.DataFrame:
     # Clean beneficiary name (strip trailing asterisk)
     df["beneficiary"] = df["beneficiary"].str.replace(r"\s*\*+\s*$", "", regex=True).str.strip()
 
-    # donor_name: what appears in Autocount as "Deal With" — use beneficiary name
+    # donor_name: what appears in Autocount as "Deal With" - use beneficiary name
     df["donor_name"] = df["beneficiary"]
 
     # gl_text: combined text used for GL keyword matching
@@ -64,7 +64,7 @@ def parse_csv(filepath: str) -> pd.DataFrame:
 
     df["gl_text"] = df.apply(build_gl_text, axis=1)
 
-    # description shown in Autocount — same as donor_name (GL mapping uses gl_text separately)
+    # description shown in Autocount - same as donor_name (GL mapping uses gl_text separately)
     df["description"] = df["donor_name"]
 
     df["source_file"] = Path(filepath).name
@@ -72,7 +72,7 @@ def parse_csv(filepath: str) -> pd.DataFrame:
 
 
 def parse_pdf(filepath: str) -> pd.DataFrame:
-    """Parse Maybank PDF statement — extracts the transaction table."""
+    """Parse Maybank PDF statement - extracts the transaction table."""
     rows = []
     with pdfplumber.open(filepath) as pdf:
         for page in pdf.pages:

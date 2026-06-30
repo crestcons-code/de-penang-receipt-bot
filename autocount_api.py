@@ -1,4 +1,4 @@
-# autocount_api.py — Autocount Cloud API wrapper
+# autocount_api.py - Autocount Cloud API wrapper
 
 import requests
 from config_loader import AUTOCOUNT

@@ -1,6 +1,6 @@
 # donation_mapping.py
 # Maps keywords found in bank transaction descriptions to Autocount GL account codes.
-# Keywords are case-insensitive. First match wins — put more specific terms first.
+# Keywords are case-insensitive. First match wins - put more specific terms first.
 # Edit this file to add/change mappings without touching any other code.
 
 DONATION_MAP = [
@@ -27,7 +27,7 @@ DONATION_MAP = [
     ("500-9002", "Mahadana",                ["mahadana"]),
     ("500-9003", "Mangala Family",          ["mangala"]),
     ("500-9004", "Dhamma Propagation",      ["dhamma propagation", "ecosystem"]),
-    ("500-4000", "General Donation",        []),   # fallback — always last
+    ("500-4000", "General Donation",        []),   # fallback - always last
 ]
 
 FALLBACK_GL = "500-4000"   # DONATION - GENERAL
