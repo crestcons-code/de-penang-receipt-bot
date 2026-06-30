@@ -16,7 +16,7 @@ st.set_page_config(page_title="DE Penang Autocount Donation Receipts Apps", page
 # â"€â"€ GL code options for dropdown
 GL_OPTIONS = {f"{code}  {desc}": code for code, desc, _ in DONATION_MAP}
 
-# Reverse lookup: GL code â†' short description
+# Reverse lookup: GL code â+' short description
 GL_SHORT_DESC = {code: desc for code, desc, _ in DONATION_MAP}
 
 
@@ -124,17 +124,17 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
         st.info("No new transactions to post.")
         return
 
-    # âœ" / âœ˜ buttons
+    # Tick All / Untick All buttons
     if "post_all" not in st.session_state:
         st.session_state.post_all = True
 
     btn_col, spacer = st.columns([1, 15])
     with btn_col:
         b1, b2 = st.columns(2)
-        if b1.button("âœ"", help="Tick All", use_container_width=True):
+        if b1.button("Tick All", help="Tick All", use_container_width=True):
             st.session_state.post_all = True
             st.rerun()
-        if b2.button("âœ˜", help="Untick All", use_container_width=True):
+        if b2.button("Untick All", help="Untick All", use_container_width=True):
             st.session_state.post_all = False
             st.rerun()
 
@@ -251,9 +251,9 @@ st.divider()
 
 tab_bank, tab_dana, tab_recon = st.tabs(["Upload Bank Statement (CSV/PDF)", "Upload Dana List (Excel)", "Reconciliation"])
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ==============================================
 # TAB 1 - Bank Statement
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ==============================================
 with tab_bank:
     st.subheader("Step 1 - Upload Maybank Statement")
     uploaded = st.file_uploader("Upload Maybank CSV or PDF statement", type=["csv", "pdf"], key="bank_upload")
@@ -321,9 +321,9 @@ with tab_bank:
     else:
         st.info("Upload a Maybank bank statement CSV or PDF to get started.")
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ==============================================
 # TAB 2 - Dana List Excel
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ==============================================
 with tab_dana:
     st.subheader("Step 1 - Upload Dana List Excel")
     st.caption("Upload the monthly dana list Excel file (e.g. DEPG Dana list 2026 June.xlsx)")
@@ -373,7 +373,7 @@ with tab_dana:
         for p in posted:
             doc = p["docNo"]
             posted_or_numbers.add(doc)
-            # Add base number: OR-2606153-1 â†' also add OR-2606153
+            # Add base number: OR-2606153-1 â+' also add OR-2606153
             import re as _re
             base = _re.sub(r"-\d+$", "", doc)
             posted_or_numbers.add(base)
@@ -420,9 +420,9 @@ with tab_dana:
     else:
         st.info("Upload the monthly dana list Excel file to get started.")
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ==============================================
 # TAB 3 - Reconciliation
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ==============================================
 with tab_recon:
     st.subheader("Reconciliation - Dana List / Bank Statement vs Autocount")
     st.caption("Verify every donation has been recorded in Autocount.")
