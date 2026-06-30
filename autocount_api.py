@@ -1,7 +1,7 @@
 # autocount_api.py — Autocount Cloud API wrapper
 
 import requests
-from config import AUTOCOUNT
+from config_loader import AUTOCOUNT
 
 
 class AutocountClient:

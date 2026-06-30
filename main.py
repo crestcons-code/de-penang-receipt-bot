@@ -1,4 +1,4 @@
-# main.py -- Step 2: Post reviewed donations to Autocount
+﻿# main.py -- Step 2: Post reviewed donations to Autocount
 #
 # Usage:
 #   python main.py "C:\Users\SerVer2\Desktop\review_YYYYMMDD_HHMMSS.xlsx"
@@ -8,7 +8,7 @@ import os
 import pandas as pd
 from datetime import datetime
 from autocount_api import AutocountClient
-from config import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD
+from config_loader import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD
 
 
 def post(review_file: str):
