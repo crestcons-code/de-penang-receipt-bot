@@ -130,13 +130,11 @@ def load_dana_list(file) -> pd.DataFrame:
             continue
         txn_date = pd.to_datetime(raw_date).strftime("%Y-%m-%d")
 
-        # Donor name: prefer receipt donor name (col J), fall back to beneficiary
-        donor = ""
-        if col_donor and pd.notna(r[col_donor]):
-            donor = str(r[col_donor]).strip()
-        if not donor or donor.lower() in ("nan", "none"):
+        # Donor name: col J (Donor name on Receipt) first, fall back to col D (Beneficiary)
+        donor = str(r[col_donor]).strip() if (col_donor and pd.notna(r[col_donor])) else ""
+        if not donor or donor.lower() in ("nan", "none", "-", "n/a"):
             donor = str(r[col_bene]).strip().rstrip("*").strip()
-        donor = donor.splitlines()[0].strip() if donor else donor
+        donor = donor.splitlines()[0].strip() if donor else ""
 
         # OR number (may be pre-filled or blank)
         or_no = str(r[col_or]).strip() if pd.notna(r[col_or]) else ""
