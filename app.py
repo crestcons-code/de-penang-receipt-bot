@@ -500,7 +500,8 @@ with tab_dana:
             posted_or_numbers.add(base)
 
         rows = []
-        skipped_rows = []
+        skipped_rows = []   # display info
+        skipped_txns = []   # full txn data for potential re-include
         skipped_count = 0
         seq = next_seq
         for _, txn in df_dana.iterrows():
@@ -510,17 +511,19 @@ with tab_dana:
             # Skip if pre-filled OR number already exists in Autocount
             if txn["or_number"] and txn["or_number"] in posted_or_numbers:
                 skipped_count += 1
-                skipped_rows.append({"OR Number": txn["or_number"], "Date": txn_date,
+                skipped_rows.append({"Re-post?": False, "OR Number": txn["or_number"], "Date": txn_date,
                                      "Donor": txn["donor_name"], "Amount (RM)": amount,
                                      "Reason": "OR number already in Autocount"})
+                skipped_txns.append(txn)
                 continue
 
             # Skip if no OR number and date+amount already posted
             if not txn["or_number"] and (txn_date, amount) in posted_keys:
                 skipped_count += 1
-                skipped_rows.append({"OR Number": "(none)", "Date": txn_date,
+                skipped_rows.append({"Re-post?": False, "OR Number": "(none)", "Date": txn_date,
                                      "Donor": txn["donor_name"], "Amount (RM)": amount,
                                      "Reason": "Same date & amount already in Autocount"})
+                skipped_txns.append(txn)
                 continue
 
             # Use pre-filled OR number or auto-assign
@@ -544,9 +547,36 @@ with tab_dana:
             })
 
         if skipped_rows:
-            with st.expander(f"ℹ️ {skipped_count} row(s) skipped — already in Autocount (click to view)"):
-                st.dataframe(pd.DataFrame(skipped_rows), use_container_width=True, hide_index=True)
-                st.caption("If any of these show 'OR number already in Autocount' but you believe they failed, please verify directly in Autocount before re-posting to avoid duplicates.")
+            with st.expander(f"⚠️ {skipped_count} row(s) skipped — already found in Autocount (click to view / re-post)"):
+                st.caption("Tick **Re-post?** on any row you believe was NOT actually posted, then click the button below to add it to Step 2.")
+                edited_skipped = st.data_editor(
+                    pd.DataFrame(skipped_rows),
+                    column_config={"Re-post?": st.column_config.CheckboxColumn("Re-post?", default=False)},
+                    use_container_width=True, hide_index=True,
+                    key="skipped_editor",
+                )
+                if st.button("↩️ Add selected rows back to Step 2", key="reinclude_btn"):
+                    reinclude_idx = edited_skipped.index[edited_skipped["Re-post?"] == True].tolist()
+                    for idx in reinclude_idx:
+                        txn = skipped_txns[idx]
+                        txn_date = txn["date"]
+                        amount   = round(float(txn["amount"]), 2)
+                        or_no = txn["or_number"] if txn["or_number"] else f"OR-{txn_date[2:4]}{txn_date[5:7]}{seq:03d}"
+                        if not txn["or_number"]:
+                            seq += 1
+                        rows.append({
+                            "Post":           True,
+                            "OR Number":      or_no,
+                            "Date":           txn_date,
+                            "Donor Name":     txn["donor_name"],
+                            "GL Account":     txn["gl_display"],
+                            "Description":    txn["description"],
+                            "Department":     txn["department"],
+                            "Amount (RM)":    amount,
+                            "WhatsApp Mobile": txn.get("mobile", ""),
+                        })
+                    if reinclude_idx:
+                        st.success(f"{len(reinclude_idx)} row(s) added to Step 2 below.")
 
         render_review_and_post(rows, skipped_count)
 
