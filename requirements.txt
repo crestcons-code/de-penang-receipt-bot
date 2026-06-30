@@ -5,3 +5,4 @@ rapidfuzz>=3.0
 requests>=2.31
 streamlit-authenticator>=0.4
 bcrypt>=4.0
+pyyaml>=6.0

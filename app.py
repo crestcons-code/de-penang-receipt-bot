@@ -14,18 +14,47 @@ from config_loader import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD
 
 st.set_page_config(page_title="DE Penang Autocount Donation Receipts Apps", page_icon="ðŸ¦", layout="wide")
 
-# ── Authentication
-_credentials = {
-    "usernames": {
-        "crestcons": {
-            "name": "Crestcons",
-            "password": "$2b$12$q2OCd1uWqcXqgdmbTv7RweXAXB.ZZWbuf4ecghOr8Iw2Y8ZGY4HKy",
-        }
-    }
-}
+# ── Load users from GitHub (cloud) or local users.yaml
+import base64, yaml, bcrypt, requests as _req
+
+def _load_users_from_github() -> dict:
+    try:
+        token = st.secrets.get("GITHUB_TOKEN", "")
+        if not token:
+            raise ValueError("No GITHUB_TOKEN")
+        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+        r = _req.get("https://api.github.com/repos/crestcons-code/de-penang-receipt-bot/contents/users.yaml", headers=headers, timeout=10)
+        r.raise_for_status()
+        return yaml.safe_load(base64.b64decode(r.json()["content"]))
+    except Exception:
+        return None
+
+def _load_users_local() -> dict:
+    try:
+        with open("users.yaml", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except Exception:
+        return {"usernames": {"crestcons": {"name": "Crestcons", "password": "$2b$12$q2OCd1uWqcXqgdmbTv7RweXAXB.ZZWbuf4ecghOr8Iw2Y8ZGY4HKy", "role": "admin"}}}
+
+def _save_users_to_github(users_dict: dict) -> bool:
+    try:
+        token = st.secrets.get("GITHUB_TOKEN", "")
+        if not token:
+            return False
+        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+        url = "https://api.github.com/repos/crestcons-code/de-penang-receipt-bot/contents/users.yaml"
+        sha = _req.get(url, headers=headers, timeout=10).json().get("sha", "")
+        new_content = yaml.dump(users_dict, default_flow_style=False, allow_unicode=True)
+        payload = {"message": "Update users", "content": base64.b64encode(new_content.encode()).decode(), "sha": sha}
+        r = _req.put(url, headers=headers, json=payload, timeout=10)
+        return r.status_code in (200, 201)
+    except Exception:
+        return False
+
+_users_data = _load_users_from_github() or _load_users_local()
 
 authenticator = stauth.Authenticate(
-    _credentials,
+    _users_data,
     cookie_name="dep_receipt_app",
     cookie_key="dep_secret_key_2026",
     cookie_expiry_days=1,
@@ -39,8 +68,13 @@ if st.session_state.get("authentication_status") is False:
 elif st.session_state.get("authentication_status") is None:
     st.stop()
 
-# Show logout button in sidebar
-authenticator.logout("Logout", location="sidebar")
+_current_user     = st.session_state.get("username", "")
+_current_role     = _users_data.get("usernames", {}).get(_current_user, {}).get("role", "user")
+_current_name     = st.session_state.get("name", _current_user)
+
+with st.sidebar:
+    st.markdown(f"**{_current_name}**")
+    authenticator.logout("Logout")
 
 
 # â"€â"€ GL code options for dropdown
@@ -279,7 +313,14 @@ st.title("DE Penang Autocount Donation Receipts Apps")
 st.caption("Persatuan Dhamma Malaysia (Malaysia Dhamma Society - Penang Branch)")
 st.divider()
 
-tab_bank, tab_dana, tab_recon = st.tabs(["Upload Bank Statement (CSV/PDF)", "Upload Dana List (Excel)", "Reconciliation"])
+_tabs = ["Upload Bank Statement (CSV/PDF)", "Upload Dana List (Excel)", "Reconciliation"]
+if _current_role == "admin":
+    _tabs.append("Admin — Manage Users")
+_tab_objs = st.tabs(_tabs)
+tab_bank  = _tab_objs[0]
+tab_dana  = _tab_objs[1]
+tab_recon = _tab_objs[2]
+tab_admin = _tab_objs[3] if _current_role == "admin" else None
 
 # ==============================================
 # TAB 1 - Bank Statement
@@ -615,3 +656,66 @@ with tab_recon:
             _render_recon_results(result_rows, "Bank Statement")
         else:
             st.info("Upload the Maybank bank statement CSV to run the reconciliation check.")
+
+# ==============================================
+# TAB 4 - Admin: Manage Users (admin only)
+# ==============================================
+if tab_admin is not None:
+    with tab_admin:
+        st.subheader("User Management")
+        st.caption("Add or remove users who can access this app.")
+
+        users = _users_data.get("usernames", {})
+
+        # ── Current users table
+        st.markdown("**Current Users**")
+        user_rows = [{"Username": u, "Name": v.get("name",""), "Role": v.get("role","user")} for u, v in users.items()]
+        st.dataframe(user_rows, use_container_width=True, hide_index=True)
+        st.divider()
+
+        # ── Add new user
+        st.markdown("**Add New User**")
+        with st.form("add_user_form"):
+            new_username = st.text_input("Username", placeholder="e.g. johndoe").strip().lower()
+            new_name     = st.text_input("Full Name", placeholder="e.g. John Doe").strip()
+            new_password = st.text_input("Password", type="password")
+            new_role     = st.selectbox("Role", ["user", "admin"])
+            submitted    = st.form_submit_button("Add User", type="primary")
+
+        if submitted:
+            if not new_username or not new_name or not new_password:
+                st.error("Please fill in all fields.")
+            elif new_username in users:
+                st.error(f"Username '{new_username}' already exists.")
+            else:
+                import bcrypt as _bcrypt
+                hashed = _bcrypt.hashpw(new_password.encode(), _bcrypt.gensalt()).decode()
+                _users_data["usernames"][new_username] = {"name": new_name, "password": hashed, "role": new_role}
+                if _save_users_to_github(_users_data):
+                    st.success(f"User '{new_username}' added successfully! They can log in immediately.")
+                    st.rerun()
+                else:
+                    st.error("Failed to save to GitHub. Check that GITHUB_TOKEN is set in Streamlit secrets.")
+
+        st.divider()
+
+        # ── Remove user
+        st.markdown("**Remove User**")
+        removable = [u for u in users if u != _current_user]
+        if removable:
+            with st.form("remove_user_form"):
+                remove_user = st.selectbox("Select user to remove", removable)
+                confirm     = st.checkbox(f"Yes, I want to remove '{remove_user}'")
+                remove_btn  = st.form_submit_button("Remove User", type="secondary")
+            if remove_btn:
+                if not confirm:
+                    st.warning("Please tick the confirmation checkbox.")
+                else:
+                    del _users_data["usernames"][remove_user]
+                    if _save_users_to_github(_users_data):
+                        st.success(f"User '{remove_user}' removed.")
+                        st.rerun()
+                    else:
+                        st.error("Failed to save to GitHub.")
+        else:
+            st.info("No other users to remove.")
