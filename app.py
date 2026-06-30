@@ -119,6 +119,7 @@ def load_dana_list(file) -> pd.DataFrame:
     col_mobile   = cols[11] if len(cols) > 11 else None
 
     rows = []
+    blank_gl_count = [0]  # mutable counter
     for _, r in df.iterrows():
         amount = _parse_amount(r[col_amount])
         if amount <= 0:
@@ -152,12 +153,10 @@ def load_dana_list(file) -> pd.DataFrame:
         raw_desc = str(r[col_desc]).strip() if pd.notna(r[col_desc]) else ""
         description = raw_desc.splitlines()[0].strip() if raw_desc else ""
 
-        # If GL not pre-filled, auto-map from transaction text
+        # Skip rows where column H (accounting code) is blank
         if not gl_code:
-            combined = f"{r.get(df.columns[1], '')} {r.get(df.columns[2], '')} {donor}"
-            gl_code, _, auto_desc = map_to_gl(combined)
-            if not description:
-                description = auto_desc
+            blank_gl_count[0] += 1
+            continue
 
         if not description:
             description = GL_SHORT_DESC.get(gl_code, "General Donation")
@@ -180,7 +179,7 @@ def load_dana_list(file) -> pd.DataFrame:
             "mobile":      mobile,
         })
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows), blank_gl_count[0]
 
 
 def render_review_and_post(rows: list, skipped_count: int = 0):
@@ -406,13 +405,15 @@ with tab_dana:
 
     if dana_file:
         try:
-            df_dana = load_dana_list(dana_file)
+            df_dana, blank_gl = load_dana_list(dana_file)
         except Exception as e:
             st.error(f"Error reading dana list: {e}")
             st.stop()
 
         total_amt = df_dana["amount"].sum()
         st.success(f"Found **{len(df_dana)} donation(s)** totalling **RM {total_amt:,.2f}**")
+        if blank_gl > 0:
+            st.warning(f"{blank_gl} row(s) skipped — column H (accounting code) is blank. Please fill in the GL code in the dana list and re-upload.")
 
         # Count pre-filled vs auto-assigned OR numbers needed
         pre_filled = df_dana["or_number"].ne("").sum()
@@ -578,7 +579,7 @@ with tab_recon:
 
         if recon_file:
             try:
-                df_recon = load_dana_list(recon_file)
+                df_recon, _ = load_dana_list(recon_file)
             except Exception as e:
                 st.error(f"Error reading dana list: {e}")
                 st.stop()
