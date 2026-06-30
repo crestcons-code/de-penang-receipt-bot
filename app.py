@@ -1,9 +1,10 @@
-﻿# app.py -- Autocount Donation Receipt Web App
+# app.py -- Autocount Donation Receipt Web App
 # Run with: python -m streamlit run app.py
 
 import sys, io, re
 import streamlit as st
 import pandas as pd
+import streamlit_authenticator as stauth
 
 sys.path.insert(0, '.')
 from parse_maybank import load_statement
@@ -12,6 +13,35 @@ from autocount_api import AutocountClient
 from config_loader import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD
 
 st.set_page_config(page_title="DE Penang Autocount Donation Receipts Apps", page_icon="ðŸ¦", layout="wide")
+
+# ── Authentication
+_credentials = {
+    "usernames": {
+        "crestcons": {
+            "name": "Crestcons",
+            "password": "$2b$12$q2OCd1uWqcXqgdmbTv7RweXAXB.ZZWbuf4ecghOr8Iw2Y8ZGY4HKy",
+        }
+    }
+}
+
+authenticator = stauth.Authenticate(
+    _credentials,
+    cookie_name="dep_receipt_app",
+    cookie_key="dep_secret_key_2026",
+    cookie_expiry_days=1,
+)
+
+authenticator.login()
+
+if st.session_state.get("authentication_status") is False:
+    st.error("Incorrect username or password.")
+    st.stop()
+elif st.session_state.get("authentication_status") is None:
+    st.stop()
+
+# Show logout button in sidebar
+authenticator.logout("Logout", location="sidebar")
+
 
 # â"€â"€ GL code options for dropdown
 GL_OPTIONS = {f"{code}  {desc}": code for code, desc, _ in DONATION_MAP}
