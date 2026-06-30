@@ -547,10 +547,11 @@ with tab_recon:
         st.dataframe(df_show.style.apply(_row_color, axis=1), use_container_width=True, hide_index=True)
 
         buf = io.BytesIO()
-        df_result.to_excel(buf, index=False)
+        df_show.to_excel(buf, index=False)
+        label = {"All": "All", "Missing only": "Missing Only", "Found only": "Found Only"}.get(filter_opt, "All")
         st.download_button(
-            "Download Reconciliation Report", buf.getvalue(),
-            file_name="reconciliation_report.xlsx",
+            f"Download Reconciliation Report ({label})", buf.getvalue(),
+            file_name=f"reconciliation_report_{label.lower().replace(' ','_')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
