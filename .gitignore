@@ -1,0 +1,19 @@
+# Credentials — never commit
+config.py
+
+# Bank statements — private financial data
+*.csv
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Debug/test scripts
+probe_docno.py
+test_*.py
+
+# Excel review/report files
+review_*.xlsx
+posted_*.xlsx
