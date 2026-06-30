@@ -215,7 +215,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
             "Post":             st.column_config.CheckboxColumn("Post?", default=True),
             "OR Number":        st.column_config.TextColumn("OR Number", disabled=True),
             "Date":             st.column_config.TextColumn("Date", disabled=True),
-            "Donor Name":       st.column_config.TextColumn("Donor Name", disabled=True),
+            "Donor Name":       st.column_config.TextColumn("Donor Name"),
             "GL Account":       st.column_config.SelectboxColumn("GL Account", options=list(GL_OPTIONS.keys())),
             "Description":      st.column_config.TextColumn("Description (in Autocount)"),
             "Department":       st.column_config.TextColumn("Department"),
