@@ -97,7 +97,7 @@ def _gl_display(gl_code: str) -> str:
     return f"{gl_code}  {short}"
 
 
-def load_dana_list(file) -> pd.DataFrame:
+def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
     """
     Parse the dana list Excel file into the same internal format as the bank statement parser.
     Returns a DataFrame with columns: or_number, date, donor_name, gl_code, gl_display, description, department, amount
@@ -153,10 +153,11 @@ def load_dana_list(file) -> pd.DataFrame:
         raw_desc = str(r[col_desc]).strip() if pd.notna(r[col_desc]) else ""
         description = raw_desc.splitlines()[0].strip() if raw_desc else ""
 
-        # Skip rows where column H (accounting code) is blank
+        # Skip rows where column H (accounting code) is blank (only when posting receipts)
         if not gl_code:
             blank_gl_count[0] += 1
-            continue
+            if skip_blank_gl:
+                continue
 
         if not description:
             description = GL_SHORT_DESC.get(gl_code, "General Donation")
@@ -579,7 +580,7 @@ with tab_recon:
 
         if recon_file:
             try:
-                df_recon, _ = load_dana_list(recon_file)
+                df_recon, _ = load_dana_list(recon_file, skip_blank_gl=False)
             except Exception as e:
                 st.error(f"Error reading dana list: {e}")
                 st.stop()
