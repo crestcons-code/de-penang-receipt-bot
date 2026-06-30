@@ -278,10 +278,14 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
                 )
                 doc_no = result.get("docNo") or result.get("DocNo") or "posted"
                 results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
-                                "Description": desc, "Doc No": doc_no, "Status": "success", "Notes": ""})
+                                "Description": desc, "Doc No": doc_no, "Date": date,
+                                "WhatsApp": str(row.get("WhatsApp Mobile", "")).strip(),
+                                "Status": "success", "Notes": ""})
             except Exception as e:
                 results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
-                                "Description": desc, "Doc No": None, "Status": "error", "Notes": str(e)})
+                                "Description": desc, "Doc No": None, "Date": date,
+                                "WhatsApp": str(row.get("WhatsApp Mobile", "")).strip(),
+                                "Status": "error", "Notes": str(e)})
 
             progress.progress((i + 1) / len(to_post))
 
@@ -310,6 +314,25 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
         st.download_button("Download Posting Report", buf.getvalue(),
                            file_name="posting_report.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        # Donor list with updated OR numbers and WhatsApp
+        df_donor = df_results[df_results["Status"] == "success"][
+            ["Date", "Doc No", "Donor", "Amount", "GL", "Description", "WhatsApp"]
+        ].rename(columns={
+            "Date":        "Transaction Date",
+            "Doc No":      "OR Number",
+            "Donor":       "Donor Name",
+            "Amount":      "Amount (RM)",
+            "GL":          "GL Code",
+            "Description": "Description",
+            "WhatsApp":    "WhatsApp Mobile",
+        })
+        if not df_donor.empty:
+            buf2 = io.BytesIO()
+            df_donor.to_excel(buf2, index=False)
+            st.download_button("Download Donor List (OR + WhatsApp)", buf2.getvalue(),
+                               file_name="donor_list_posted.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
