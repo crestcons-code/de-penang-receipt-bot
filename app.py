@@ -131,10 +131,10 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
     btn_col, spacer = st.columns([1, 15])
     with btn_col:
         b1, b2 = st.columns(2)
-        if b1.button("Tick All", help="Tick All", use_container_width=True):
+        if b1.button("✔ All", help="Tick All", use_container_width=True):
             st.session_state.post_all = True
             st.rerun()
-        if b2.button("Untick All", help="Untick All", use_container_width=True):
+        if b2.button("✘ All", help="Untick All", use_container_width=True):
             st.session_state.post_all = False
             st.rerun()
 
