@@ -106,14 +106,17 @@ def load_dana_list(file) -> pd.DataFrame:
     df.columns = [str(c).strip() for c in df.columns]
 
     # Identify columns by position (structure is fixed)
-    col_date     = df.columns[0]   # Transaction Date
-    col_bene     = df.columns[3]   # Beneficiary / Biller Name
-    col_amount   = df.columns[5]   # Transaction Amount: Cash-in (RM)
-    col_or       = df.columns[6]   # Receipts No
-    col_gl       = df.columns[7]   # accounting code
-    col_desc     = df.columns[8]   # Dana description
-    col_donor    = df.columns[9]   # Donor name (Indicated on Receipt)
-    col_mobile   = df.columns[11]  # Whatsapps Mobile
+    cols = df.columns
+    if len(cols) < 9:
+        raise ValueError(f"Dana list has only {len(cols)} columns — expected at least 9. Please check the file format.")
+    col_date     = cols[0]    # Transaction Date
+    col_bene     = cols[3]    # Beneficiary / Biller Name
+    col_amount   = cols[5]    # Transaction Amount: Cash-in (RM)
+    col_or       = cols[6]    # Receipts No
+    col_gl       = cols[7]    # accounting code
+    col_desc     = cols[8]    # Dana description
+    col_donor    = cols[9]  if len(cols) > 9  else None
+    col_mobile   = cols[11] if len(cols) > 11 else None
 
     rows = []
     for _, r in df.iterrows():
@@ -127,11 +130,12 @@ def load_dana_list(file) -> pd.DataFrame:
             continue
         txn_date = pd.to_datetime(raw_date).strftime("%Y-%m-%d")
 
-        # Donor name: prefer receipt donor name, fall back to beneficiary
-        donor = str(r[col_donor]).strip() if pd.notna(r[col_donor]) else ""
-        if not donor or donor.lower() in ("nan", "none", ""):
+        # Donor name: prefer receipt donor name (col J), fall back to beneficiary
+        donor = ""
+        if col_donor and pd.notna(r[col_donor]):
+            donor = str(r[col_donor]).strip()
+        if not donor or donor.lower() in ("nan", "none"):
             donor = str(r[col_bene]).strip().rstrip("*").strip()
-        # Take first line only if donor name spans multiple lines
         donor = donor.splitlines()[0].strip() if donor else donor
 
         # OR number (may be pre-filled or blank)
@@ -160,9 +164,11 @@ def load_dana_list(file) -> pd.DataFrame:
         if not description:
             description = GL_SHORT_DESC.get(gl_code, "General Donation")
 
-        mobile = str(r[col_mobile]).strip() if pd.notna(r[col_mobile]) else ""
-        if mobile.lower() in ("nan", "none"):
-            mobile = ""
+        mobile = ""
+        if col_mobile and pd.notna(r[col_mobile]):
+            mobile = str(r[col_mobile]).strip()
+            if mobile.lower() in ("nan", "none"):
+                mobile = ""
 
         rows.append({
             "or_number":   or_no,
