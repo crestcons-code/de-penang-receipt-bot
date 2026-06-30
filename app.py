@@ -128,7 +128,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
     if "post_all" not in st.session_state:
         st.session_state.post_all = True
 
-    btn_col, spacer = st.columns([1, 15])
+    btn_col, spacer = st.columns([3, 13])
     with btn_col:
         b1, b2 = st.columns(2)
         if b1.button("✔ All", help="Tick All", use_container_width=True):
