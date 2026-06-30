@@ -92,9 +92,9 @@ def _parse_amount(val) -> float:
 
 
 def _gl_display(gl_code: str) -> str:
-    """Return the GL_OPTIONS key string for a given GL code."""
-    short = GL_SHORT_DESC.get(gl_code, gl_code)
-    return f"{gl_code}  {short}"
+    """Return the GL_OPTIONS key string for a given GL code, or bare code if unknown."""
+    short = GL_SHORT_DESC.get(gl_code)
+    return f"{gl_code}  {short}" if short else gl_code
 
 
 def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
@@ -258,7 +258,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
         status_box = st.empty()
 
         for i, (_, row) in enumerate(to_post.iterrows()):
-            gl_code = GL_OPTIONS.get(row["GL Account"], row["GL Account"].split()[0])
+            gl_code = GL_OPTIONS.get(row["GL Account"]) or row["GL Account"].split()[0]
             donor   = str(row["Donor Name"])
             amount  = float(row["Amount (RM)"])
             date    = str(row["Date"])
