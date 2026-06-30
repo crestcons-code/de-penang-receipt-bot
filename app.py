@@ -699,6 +699,55 @@ if tab_admin is not None:
 
         st.divider()
 
+        # ── Edit user
+        st.markdown("**Edit User**")
+        with st.form("edit_user_form"):
+            edit_user     = st.selectbox("Select user to edit", list(users.keys()))
+            edit_name     = st.text_input("New Display Name (leave blank to keep current)")
+            edit_username = st.text_input("New Username (leave blank to keep current)").strip().lower()
+            edit_password = st.text_input("New Password (leave blank to keep current)", type="password")
+            edit_role     = st.selectbox("Role", ["user", "admin"])
+            edit_btn      = st.form_submit_button("Save Changes", type="primary")
+
+        if edit_btn:
+            user_data = dict(users[edit_user])
+            changed = False
+
+            if edit_name:
+                user_data["name"] = edit_name
+                changed = True
+            if edit_password:
+                import bcrypt as _bcrypt
+                user_data["password"] = _bcrypt.hashpw(edit_password.encode(), _bcrypt.gensalt()).decode()
+                changed = True
+            if edit_role != user_data.get("role", "user"):
+                user_data["role"] = edit_role
+                changed = True
+
+            # Handle username change (rename key)
+            target_username = edit_username if edit_username else edit_user
+            if edit_username and edit_username != edit_user:
+                if edit_username in users:
+                    st.error(f"Username '{edit_username}' is already taken.")
+                    changed = False
+                else:
+                    del _users_data["usernames"][edit_user]
+                    _users_data["usernames"][target_username] = user_data
+                    changed = True
+            elif changed:
+                _users_data["usernames"][edit_user] = user_data
+
+            if changed:
+                if _save_users_to_github(_users_data):
+                    st.success(f"User '{target_username}' updated successfully.")
+                    st.rerun()
+                else:
+                    st.error("Failed to save to GitHub.")
+            else:
+                st.info("No changes made.")
+
+        st.divider()
+
         # ── Remove user
         st.markdown("**Remove User**")
         removable = [u for u in users if u != _current_user]
