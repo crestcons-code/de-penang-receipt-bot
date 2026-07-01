@@ -298,7 +298,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
         df_rows,
         column_config={
             "Post":             st.column_config.CheckboxColumn("Post?", default=True),
-            "OR Number":        st.column_config.TextColumn("OR Number", disabled=True),
+            "OR Number":        st.column_config.TextColumn("OR Number", help="Edit to reuse a specific missing OR number"),
             "Date":             st.column_config.TextColumn("Date", disabled=True),
             "Donor Name":       st.column_config.TextColumn("Donor Name"),
             "GL Account":       st.column_config.SelectboxColumn("GL Account", options=all_gl_options),
@@ -447,7 +447,7 @@ with tab_bank:
         st.divider()
 
         st.subheader("Step 2 - Review & Edit Before Posting")
-        st.info("Check each row. Change GL Account or Description if needed. Uncheck rows you want to skip.")
+        st.info("Check each row. Change GL Account, Description, or OR Number if needed (e.g. to reuse a missing OR number from a failed post). Uncheck rows you want to skip.")
 
         with st.spinner("Checking Autocount for existing records and last OR number..."):
             client_pre = AutocountClient()
@@ -520,7 +520,7 @@ with tab_dana:
 
         st.divider()
         st.subheader("Step 2 - Review & Edit Before Posting")
-        st.info("Check each row. Change GL Account or Description if needed. Uncheck rows you want to skip.")
+        st.info("Check each row. Change GL Account, Description, or OR Number if needed (e.g. to reuse a missing OR number from a failed post). Uncheck rows you want to skip.")
 
         # Auto-assign OR numbers only for rows that don't have one
         with st.spinner("Checking Autocount for existing records and last OR number..."):
