@@ -530,12 +530,24 @@ with tab_dana:
             posted    = client_pre.get_posted_receipts(from_date, to_date)
             posted_keys = {(p["date"], round(p["amount"], 2), p["dealWith"]) for p in posted}
 
+            gap_queue = []
             if needs_or > 0:
                 sample_date = df_dana["date"].iloc[0]
                 yy, mm = sample_date[2:4], sample_date[5:7]
                 prefix = f"OR-{yy}{mm}"
                 last_or = client_pre.get_last_or_number(prefix=prefix)
-                next_seq = (int(last_or[len(prefix):]) + 1) if (last_or and last_or.startswith(prefix)) else 1
+                max_used = int(last_or[len(prefix):]) if (last_or and last_or.startswith(prefix)) else 0
+
+                # Find any gap numbers (missing OR-YYMMNNN) within this month's range so they
+                # get backfilled automatically instead of creating new gaps further down.
+                used_nums = set()
+                for p in posted:
+                    doc = p["docNo"]
+                    if doc.startswith(prefix) and doc[len(prefix):].isdigit():
+                        used_nums.add(int(doc[len(prefix):]))
+                gap_queue = [n for n in range(1, max_used) if n not in used_nums]
+
+                next_seq = max_used + 1
             else:
                 next_seq = 1
                 prefix = ""
@@ -579,13 +591,16 @@ with tab_dana:
                 skipped_txns.append(txn)
                 continue
 
-            # Use pre-filled OR number or auto-assign
+            # Use pre-filled OR number, or fill a gap number first, then continue the sequence
             if txn["or_number"]:
                 or_no = txn["or_number"]
             else:
                 t_yy, t_mm = txn_date[2:4], txn_date[5:7]
-                or_no = f"OR-{t_yy}{t_mm}{seq:03d}"
-                seq += 1
+                if gap_queue:
+                    or_no = f"OR-{t_yy}{t_mm}{gap_queue.pop(0):03d}"
+                else:
+                    or_no = f"OR-{t_yy}{t_mm}{seq:03d}"
+                    seq += 1
 
             rows.append({
                 "Post":           True,
