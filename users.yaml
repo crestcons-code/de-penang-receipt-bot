@@ -1,4 +1,8 @@
 usernames:
+  beeheap:
+    name: wong bee heap
+    password: $2b$12$G/.iXjPaX10EMapJaXl2Xul2Tp1VTumcCHCy/nQYkD9GOhyLb8mFW
+    role: user
   crestcons:
     name: bk
     password: $2b$12$q2OCd1uWqcXqgdmbTv7RweXAXB.ZZWbuf4ecghOr8Iw2Y8ZGY4HKy
