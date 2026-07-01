@@ -183,90 +183,6 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
     return pd.DataFrame(rows), blank_gl_count[0]
 
 
-def _num_to_words(n: int) -> str:
-    ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
-            "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
-            "Seventeen", "Eighteen", "Nineteen"]
-    tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
-
-    def _below_1000(num):
-        if num == 0:
-            return ""
-        if num < 20:
-            return ones[num]
-        if num < 100:
-            return tens[num // 10] + (" " + ones[num % 10] if num % 10 else "")
-        return ones[num // 100] + " Hundred" + (" " + _below_1000(num % 100) if num % 100 else "")
-
-    if n == 0:
-        return "Zero"
-    parts = []
-    for divisor, name in [(1_000_000_000, "Billion"), (1_000_000, "Million"), (1_000, "Thousand")]:
-        if n >= divisor:
-            parts.append(_below_1000(n // divisor) + " " + name)
-            n %= divisor
-    if n:
-        parts.append(_below_1000(n))
-    return " ".join(parts)
-
-
-def _amount_to_words(amount: float) -> str:
-    ringgit = int(amount)
-    sen = round((amount - ringgit) * 100)
-    if sen == 0:
-        return f"Ringgit Malaysia {_num_to_words(ringgit)} Only"
-    return f"Ringgit Malaysia {_num_to_words(ringgit)} and Sen {_num_to_words(sen)} Only"
-
-
-def generate_receipts_pdf(receipts: list) -> bytes:
-    """Generate a batch PDF of official donation receipts.
-    Each dict needs: or_number, date, donor, amount, description."""
-    from reportlab.lib.pagesizes import A5
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.units import mm
-
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A5)
-    width, height = A5
-
-    for r in receipts:
-        c.setFont("Helvetica-Bold", 13)
-        c.drawCentredString(width / 2, height - 20 * mm, "PERSATUAN DHAMMA MALAYSIA")
-        c.setFont("Helvetica", 10)
-        c.drawCentredString(width / 2, height - 26 * mm, "(Malaysia Dhamma Society - Penang Branch)")
-        c.setFont("Helvetica-Bold", 12)
-        c.drawCentredString(width / 2, height - 36 * mm, "OFFICIAL RECEIPT")
-
-        c.setFont("Helvetica", 10)
-        y = height - 48 * mm
-        c.drawString(15 * mm, y, f"Receipt No: {r['or_number']}")
-        c.drawRightString(width - 15 * mm, y, f"Date: {r['date']}")
-
-        y -= 10 * mm
-        c.drawString(15 * mm, y, f"Received from: {r['donor']}")
-
-        y -= 10 * mm
-        c.drawString(15 * mm, y, f"The sum of: {_amount_to_words(r['amount'])}")
-
-        y -= 10 * mm
-        c.drawString(15 * mm, y, f"Being payment for: {r['description']}")
-
-        y -= 10 * mm
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(15 * mm, y, f"Amount: RM {r['amount']:,.2f}")
-
-        y -= 25 * mm
-        c.setFont("Helvetica", 9)
-        c.drawString(15 * mm, y, "_____________________")
-        c.drawString(15 * mm, y - 5 * mm, "Authorised Signature")
-
-        c.showPage()
-
-    c.save()
-    buf.seek(0)
-    return buf.getvalue()
-
-
 def _post_rows(post_items: list, existing_or_numbers: set = None) -> list:
     """Post a list of row-dicts to Autocount. Each item needs: OR Number, Date, Donor Name,
     GL Account (code), Description, Department, Amount (RM), WhatsApp Mobile.
@@ -500,22 +416,24 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
                                file_name="donor_list_posted.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-        # â"€â"€ Step 4: Print batch OR as PDF
-        df_success = df_results[df_results["Status"] == "success"]
-        if not df_success.empty:
+        # â"€â"€ Step 4: Print batch OR in Autocount
+        success_ors = df_results[df_results["Status"] == "success"]["Doc No"].dropna().tolist()
+        if success_ors:
             st.divider()
-            st.subheader("Step 4 - Print Batch OR (PDF)")
-            st.caption(f"Generate one PDF containing all {len(df_success)} successfully posted receipts.")
-            if st.button("🖨️ Generate & Download Batch OR PDF", type="primary"):
-                receipts = [
-                    {"or_number": row["Doc No"], "date": row["Date"], "donor": row["Donor"],
-                     "amount": row["Amount"], "description": row["Description"]}
-                    for _, row in df_success.iterrows()
-                ]
-                pdf_bytes = generate_receipts_pdf(receipts)
-                st.download_button("Download Batch OR PDF", pdf_bytes,
-                                   file_name="batch_official_receipts.pdf",
-                                   mime="application/pdf")
+            st.subheader("Step 4 - Print Batch OR in Autocount")
+            st.markdown("""
+Follow these steps in **Autocount Cloud** to print and save all successfully posted receipts as one PDF:
+1. Open **Cash Book Entry**
+2. Click **Print Listing**
+3. Select the OR numbers listed below (search/filter by OR number)
+4. Tick all matching rows, click **Print**
+5. Choose **Save as PDF** and store it in your receipts folder
+            """)
+            or_list_text = "\n".join(success_ors)
+            st.text_area(f"OR Numbers to Print ({len(success_ors)} receipt(s)) - copy this list",
+                        value=or_list_text, height=150)
+            st.download_button("Download OR Number List (.txt)", or_list_text,
+                               file_name="or_numbers_to_print.txt", mime="text/plain")
 
 
 # â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
