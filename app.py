@@ -441,14 +441,15 @@ st.title("DE Penang Autocount Donation Receipts Apps")
 st.caption("Persatuan Dhamma Malaysia (Malaysia Dhamma Society - Penang Branch)")
 st.divider()
 
-_tabs = ["Upload Bank Statement (CSV/PDF)", "Upload Dana List (Excel)", "Reconciliation"]
+_tabs = ["Upload Bank Statement (CSV/PDF)", "Upload Dana List (Excel)", "Reconciliation", "Print Batch OR"]
 if _current_role == "admin":
     _tabs.append("Admin — Manage Users")
 _tab_objs = st.tabs(_tabs)
 tab_bank  = _tab_objs[0]
 tab_dana  = _tab_objs[1]
 tab_recon = _tab_objs[2]
-tab_admin = _tab_objs[3] if _current_role == "admin" else None
+tab_print = _tab_objs[3]
+tab_admin = _tab_objs[4] if _current_role == "admin" else None
 
 # ==============================================
 # TAB 1 - Bank Statement
@@ -846,6 +847,59 @@ with tab_recon:
             _render_recon_results(result_rows, "Bank Statement")
         else:
             st.info("Upload the Maybank bank statement CSV to run the reconciliation check.")
+
+# ==============================================
+# TAB - Print Batch OR (lookup any date range)
+# ==============================================
+with tab_print:
+    st.subheader("Print Batch OR — Lookup by Date Range")
+    st.caption("Fetch OR numbers posted in Autocount for any period, to print in batch. "
+               "Works for past postings too, not just the current session.")
+
+    import datetime as _dt
+    col_a, col_b = st.columns(2)
+    with col_a:
+        lookup_from = st.date_input("From Date", value=_dt.date.today().replace(day=1), key="lookup_from")
+    with col_b:
+        lookup_to = st.date_input("To Date", value=_dt.date.today(), key="lookup_to")
+
+    if st.button("🔍 Fetch OR Numbers", type="primary"):
+        if lookup_from > lookup_to:
+            st.error("From Date must be before To Date.")
+        else:
+            with st.spinner("Fetching OR records from Autocount..."):
+                lookup_client = AutocountClient()
+                lookup_results = lookup_client.get_posted_receipts(
+                    lookup_from.strftime("%Y-%m-%d"), lookup_to.strftime("%Y-%m-%d")
+                )
+            st.session_state["print_lookup_results"] = lookup_results
+
+    if "print_lookup_results" in st.session_state:
+        lookup_results = st.session_state["print_lookup_results"]
+        if not lookup_results:
+            st.info("No OR records found for this date range.")
+        else:
+            df_lookup = pd.DataFrame(lookup_results).sort_values("docNo")
+            df_lookup = df_lookup.rename(columns={
+                "docNo": "OR Number", "date": "Date", "dealWith": "Donor Name", "amount": "Amount (RM)"
+            })
+            st.success(f"Found {len(df_lookup)} OR record(s) totalling RM {df_lookup['Amount (RM)'].sum():,.2f}")
+            st.dataframe(df_lookup, use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.markdown("""
+Follow these steps in **Autocount Cloud** to print and save these receipts as one PDF:
+1. Open **Cash Book Entry**
+2. Click **Print Listing**
+3. Select the OR numbers listed below (search/filter by OR number)
+4. Tick all matching rows, click **Print**
+5. Choose **Save as PDF** and store it in your receipts folder
+            """)
+            or_list_text = "\n".join(df_lookup["OR Number"].tolist())
+            st.text_area(f"OR Numbers to Print ({len(df_lookup)} receipt(s)) - copy this list",
+                        value=or_list_text, height=150)
+            st.download_button("Download OR Number List (.txt)", or_list_text,
+                               file_name="or_numbers_to_print.txt", mime="text/plain")
 
 # ==============================================
 # TAB 4 - Admin: Manage Users (admin only)
