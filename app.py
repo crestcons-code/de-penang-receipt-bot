@@ -476,7 +476,7 @@ with tab_dana:
             from_date = df_dana["date"].min()
             to_date   = df_dana["date"].max()
             posted    = client_pre.get_posted_receipts(from_date, to_date)
-            posted_keys = {(p["date"], round(p["amount"], 2)) for p in posted}
+            posted_keys = {(p["date"], round(p["amount"], 2), p["dealWith"]) for p in posted}
 
             if needs_or > 0:
                 sample_date = df_dana["date"].iloc[0]
@@ -517,12 +517,13 @@ with tab_dana:
                 skipped_txns.append(txn)
                 continue
 
-            # Skip if no OR number and date+amount already posted
-            if not txn["or_number"] and (txn_date, amount) in posted_keys:
+            # Skip if no OR number and date+amount+donor already posted
+            donor_key = str(txn["donor_name"]).strip().upper()
+            if not txn["or_number"] and (txn_date, amount, donor_key) in posted_keys:
                 skipped_count += 1
                 skipped_rows.append({"Re-post?": False, "OR Number": "(none)", "Date": txn_date,
                                      "Donor": txn["donor_name"], "Amount (RM)": amount,
-                                     "Reason": "Same date & amount already in Autocount"})
+                                     "Reason": "Same date, amount & donor already in Autocount"})
                 skipped_txns.append(txn)
                 continue
 
