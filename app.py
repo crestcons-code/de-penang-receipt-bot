@@ -407,6 +407,25 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
                                file_name="donor_list_posted.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+        # â"€â"€ Step 4: Print batch OR in Autocount
+        success_ors = df_results[df_results["Status"] == "success"]["Doc No"].dropna().tolist()
+        if success_ors:
+            st.divider()
+            st.subheader("Step 4 - Print Batch OR in Autocount")
+            st.markdown("""
+Follow these steps in **Autocount Cloud** to print and save all successfully posted receipts as one PDF:
+1. Open **Cash Book Entry**
+2. Click **Print Listing**
+3. Select the OR numbers listed below (search/filter by OR number)
+4. Tick all matching rows, click **Print**
+5. Choose **Save as PDF** and store it in your receipts folder
+            """)
+            or_list_text = "\n".join(success_ors)
+            st.text_area(f"OR Numbers to Print ({len(success_ors)} receipt(s)) - copy this list",
+                        value=or_list_text, height=150)
+            st.download_button("Download OR Number List (.txt)", or_list_text,
+                               file_name="or_numbers_to_print.txt", mime="text/plain")
+
 
 # â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 st.title("DE Penang Autocount Donation Receipts Apps")
