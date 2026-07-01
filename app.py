@@ -183,6 +183,72 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
     return pd.DataFrame(rows), blank_gl_count[0]
 
 
+def _post_rows(post_items: list) -> list:
+    """Post a list of row-dicts to Autocount. Each item needs: OR Number, Date, Donor Name,
+    GL Account (code), Description, Department, Amount (RM), WhatsApp Mobile.
+    Returns a list of result dicts, preserving the intended OR Number even on failure."""
+    client = AutocountClient()
+    results = []
+    progress = st.progress(0)
+    status_box = st.empty()
+
+    for i, item in enumerate(post_items):
+        gl_code = item["GL Account"]
+        donor   = str(item["Donor Name"])
+        amount  = float(item["Amount (RM)"])
+        date    = str(item["Date"])
+        desc    = str(item["Description"])
+        or_no   = str(item.get("OR Number", "")).strip()
+        dept    = str(item.get("Department", "")).strip()
+        if dept.lower() in ("nan", "none", "-"):
+            dept = ""
+        whatsapp = str(item.get("WhatsApp Mobile", "")).strip()
+
+        status_box.info(f"Posting {i+1}/{len(post_items)}: {donor} - RM{amount:.2f} ({or_no})")
+
+        last_err = None
+        for attempt in range(3):
+            try:
+                result = client.create_donation_receipt(
+                    receipt_date=date,
+                    amount=amount,
+                    bank_gl_code=MAYBANK_GL_CODE,
+                    donation_gl_code=gl_code,
+                    donor_name=donor,
+                    payment_method=DEFAULT_PAYMENT_METHOD,
+                    description=desc,
+                    department=dept,
+                    doc_no=or_no,
+                )
+                doc_no = result.get("docNo") or result.get("DocNo") or or_no or "posted"
+                results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
+                                "Description": desc, "Doc No": doc_no, "OR Number": or_no,
+                                "Date": date, "Department": dept, "WhatsApp": whatsapp,
+                                "Status": "success", "Notes": ""})
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if "429" in str(e):
+                    wait = 5 * (attempt + 1)
+                    status_box.warning(f"Rate limited — waiting {wait}s before retry ({attempt+1}/3)...")
+                    time.sleep(wait)
+                else:
+                    break
+
+        if last_err is not None:
+            results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
+                            "Description": desc, "Doc No": None, "OR Number": or_no,
+                            "Date": date, "Department": dept, "WhatsApp": whatsapp,
+                            "Status": "error", "Notes": str(last_err)})
+
+        time.sleep(0.3)
+        progress.progress((i + 1) / len(post_items))
+
+    status_box.empty()
+    return results
+
+
 def render_review_and_post(rows: list, skipped_count: int = 0):
     """Render the shared Step 2 review table and Step 3 post section."""
     if skipped_count:
@@ -252,65 +318,22 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
         return
 
     if st.button(f"Post {len(to_post)} Receipt(s) to Autocount", type="primary", use_container_width=True):
-        client = AutocountClient()
-        results = []
-        progress = st.progress(0)
-        status_box = st.empty()
+        post_items = []
+        for _, row in to_post.iterrows():
+            post_items.append({
+                "OR Number":       str(row.get("OR Number", "")).strip(),
+                "Date":            str(row["Date"]),
+                "Donor Name":      str(row["Donor Name"]),
+                "GL Account":      GL_OPTIONS.get(row["GL Account"]) or row["GL Account"].split()[0],
+                "Description":     str(row["Description"]),
+                "Department":      str(row.get("Department", "")).strip(),
+                "Amount (RM)":     float(row["Amount (RM)"]),
+                "WhatsApp Mobile": str(row.get("WhatsApp Mobile", "")).strip(),
+            })
+        st.session_state["dana_post_results"] = _post_rows(post_items)
 
-        for i, (_, row) in enumerate(to_post.iterrows()):
-            gl_code = GL_OPTIONS.get(row["GL Account"]) or row["GL Account"].split()[0]
-            donor   = str(row["Donor Name"])
-            amount  = float(row["Amount (RM)"])
-            date    = str(row["Date"])
-            desc    = str(row["Description"])
-            or_no   = str(row.get("OR Number", "")).strip()
-            dept    = str(row.get("Department", "")).strip()
-            if dept.lower() in ("nan", "none", "-"):
-                dept = ""
-
-            status_box.info(f"Posting {i+1}/{len(to_post)}: {donor} - RM{amount:.2f}")
-
-            # Retry up to 3 times on HTTP 429 (rate limit) with increasing wait
-            last_err = None
-            for attempt in range(3):
-                try:
-                    result = client.create_donation_receipt(
-                        receipt_date=date,
-                        amount=amount,
-                        bank_gl_code=MAYBANK_GL_CODE,
-                        donation_gl_code=gl_code,
-                        donor_name=donor,
-                        payment_method=DEFAULT_PAYMENT_METHOD,
-                        description=desc,
-                        department=dept,
-                        doc_no=or_no,
-                    )
-                    doc_no = result.get("docNo") or result.get("DocNo") or "posted"
-                    results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
-                                    "Description": desc, "Doc No": doc_no, "Date": date,
-                                    "WhatsApp": str(row.get("WhatsApp Mobile", "")).strip(),
-                                    "Status": "success", "Notes": ""})
-                    last_err = None
-                    break
-                except Exception as e:
-                    last_err = e
-                    if "429" in str(e):
-                        wait = 5 * (attempt + 1)   # 5s, 10s, 15s
-                        status_box.warning(f"Rate limited — waiting {wait}s before retry ({attempt+1}/3)...")
-                        time.sleep(wait)
-                    else:
-                        break   # non-429 error, don't retry
-
-            if last_err is not None:
-                results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
-                                "Description": desc, "Doc No": None, "Date": date,
-                                "WhatsApp": str(row.get("WhatsApp Mobile", "")).strip(),
-                                "Status": "error", "Notes": str(last_err)})
-
-            time.sleep(0.3)   # small pause between every call to avoid triggering rate limit
-            progress.progress((i + 1) / len(to_post))
-
-        status_box.empty()
+    if "dana_post_results" in st.session_state:
+        results = st.session_state["dana_post_results"]
         st.divider()
 
         df_results = pd.DataFrame(results)
@@ -329,6 +352,22 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
             ),
             use_container_width=True, hide_index=True,
         )
+
+        if errors > 0:
+            st.warning(f"{errors} row(s) failed to post. Their intended OR number(s) were NOT created in Autocount, "
+                       "so retrying below will reuse the same OR number and avoid a gap in the sequence.")
+            if st.button(f"🔁 Retry {errors} Failed Row(s) with Same OR Number", type="primary"):
+                failed_items = [
+                    {"OR Number": r["OR Number"], "Date": r["Date"], "Donor Name": r["Donor"],
+                     "GL Account": r["GL"], "Description": r["Description"], "Department": r["Department"],
+                     "Amount (RM)": r["Amount"], "WhatsApp Mobile": r["WhatsApp"]}
+                    for r in results if r["Status"] == "error"
+                ]
+                retry_results = _post_rows(failed_items)
+                # Replace error entries with their retry outcome, keep successes as-is
+                new_results = [r for r in results if r["Status"] == "success"] + retry_results
+                st.session_state["dana_post_results"] = new_results
+                st.rerun()
 
         buf = io.BytesIO()
         df_results.to_excel(buf, index=False)
