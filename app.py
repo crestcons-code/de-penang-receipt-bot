@@ -206,6 +206,18 @@ def _post_rows(post_items: list) -> list:
 
         status_box.info(f"Posting {i+1}/{len(post_items)}: {donor} - RM{amount:.2f} ({or_no})")
 
+        # If a specific OR number was intended and it already exists in Autocount,
+        # it means an earlier attempt actually succeeded despite an error response.
+        # Don't re-post (would create a duplicate) - just record it as already done.
+        if or_no and client.check_doc_no_exists(or_no):
+            results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
+                            "Description": desc, "Doc No": or_no, "OR Number": or_no,
+                            "Date": date, "Department": dept, "WhatsApp": whatsapp,
+                            "Status": "success", "Notes": "Already existed in Autocount (earlier attempt had succeeded)"})
+            time.sleep(0.3)
+            progress.progress((i + 1) / len(post_items))
+            continue
+
         last_err = None
         for attempt in range(3):
             try:
@@ -219,6 +231,7 @@ def _post_rows(post_items: list) -> list:
                     description=desc,
                     department=dept,
                     doc_no=or_no,
+                    strict_doc_no=True,
                 )
                 doc_no = result.get("docNo") or result.get("DocNo") or or_no or "posted"
                 results.append({"Donor": donor, "Amount": amount, "GL": gl_code,

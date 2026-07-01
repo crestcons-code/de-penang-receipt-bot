@@ -156,6 +156,14 @@ class AutocountClient:
 
         return f"{prefix}{seq:03d}"
 
+    def check_doc_no_exists(self, doc_no: str) -> bool:
+        """Check whether an OR document number already exists in Autocount."""
+        try:
+            r = self._get("/payment/listing", params={"page": 1, "pageSize": 1, "docType": "OR", "docNo": doc_no})
+            return bool(r.get("data"))
+        except Exception:
+            return False
+
     def create_donation_receipt(
         self,
         receipt_date: str,      # "YYYY-MM-DD"
@@ -167,16 +175,21 @@ class AutocountClient:
         description: str = "",
         department: str = "",
         doc_no: str = "",
+        strict_doc_no: bool = False,
     ) -> dict:
         """
         Post an Official Receipt (OR) via Cash Book Entry:
             Dr  Bank Account (paymentDetails)
             Cr  Donation Income GL (details)
+
+        If strict_doc_no=True and doc_no is provided, only that exact number is attempted -
+        no silent fallback to the next available number. Raises on duplicate/failure instead.
         """
         # Use provided doc_no, or auto-detect next available
         last_err = None
         provided = doc_no.strip() if doc_no else ""
-        for attempt in range(20):
+        max_attempts = 1 if (provided and strict_doc_no) else 20
+        for attempt in range(max_attempts):
             doc_no = provided if (provided and attempt == 0) else self._next_or_doc_no(receipt_date, offset=attempt)
             payload = {
                 "master": {
