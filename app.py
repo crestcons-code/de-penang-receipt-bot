@@ -267,14 +267,17 @@ def generate_receipts_pdf(receipts: list) -> bytes:
     return buf.getvalue()
 
 
-def _post_rows(post_items: list) -> list:
+def _post_rows(post_items: list, existing_or_numbers: set = None) -> list:
     """Post a list of row-dicts to Autocount. Each item needs: OR Number, Date, Donor Name,
     GL Account (code), Description, Department, Amount (RM), WhatsApp Mobile.
+    existing_or_numbers: pre-fetched set of OR numbers already in Autocount (avoids an
+    unreliable live per-row API check - Autocount's listing endpoint ignores docNo filters).
     Returns a list of result dicts, preserving the intended OR Number even on failure."""
     client = AutocountClient()
     results = []
     progress = st.progress(0)
     status_box = st.empty()
+    existing_or_numbers = existing_or_numbers or set()
 
     for i, item in enumerate(post_items):
         gl_code = item["GL Account"]
@@ -293,7 +296,7 @@ def _post_rows(post_items: list) -> list:
         # If a specific OR number was intended and it already exists in Autocount,
         # it means an earlier attempt actually succeeded despite an error response.
         # Don't re-post (would create a duplicate) - just record it as already done.
-        if or_no and client.check_doc_no_exists(or_no):
+        if or_no and or_no in existing_or_numbers:
             results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
                             "Description": desc, "Doc No": or_no, "OR Number": or_no,
                             "Date": date, "Department": dept, "WhatsApp": whatsapp,
@@ -346,7 +349,7 @@ def _post_rows(post_items: list) -> list:
     return results
 
 
-def render_review_and_post(rows: list, skipped_count: int = 0):
+def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbers: set = None):
     """Render the shared Step 2 review table and Step 3 post section."""
     if skipped_count:
         st.warning(f"{skipped_count} transaction(s) already recorded in Autocount - excluded from this review.")
@@ -427,7 +430,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
                 "Amount (RM)":     float(row["Amount (RM)"]),
                 "WhatsApp Mobile": str(row.get("WhatsApp Mobile", "")).strip(),
             })
-        st.session_state["dana_post_results"] = _post_rows(post_items)
+        st.session_state["dana_post_results"] = _post_rows(post_items, existing_or_numbers)
 
     if "dana_post_results" in st.session_state:
         results = st.session_state["dana_post_results"]
@@ -460,7 +463,13 @@ def render_review_and_post(rows: list, skipped_count: int = 0):
                      "Amount (RM)": r["Amount"], "WhatsApp Mobile": r["WhatsApp"]}
                     for r in results if r["Status"] == "error"
                 ]
-                retry_results = _post_rows(failed_items)
+                # Re-fetch current OR numbers before retry, in case Autocount state changed
+                with st.spinner("Re-checking Autocount before retry..."):
+                    retry_client = AutocountClient()
+                    retry_dates = [f["Date"] for f in failed_items]
+                    fresh_posted = retry_client.get_posted_receipts(min(retry_dates), max(retry_dates))
+                    fresh_existing = {p["docNo"] for p in fresh_posted}
+                retry_results = _post_rows(failed_items, fresh_existing)
                 # Replace error entries with their retry outcome, keep successes as-is
                 new_results = [r for r in results if r["Status"] == "success"] + retry_results
                 st.session_state["dana_post_results"] = new_results
@@ -556,6 +565,7 @@ with tab_bank:
             to_date   = df_raw["date"].max().strftime("%Y-%m-%d")
             posted    = client_pre.get_posted_receipts(from_date, to_date)
             posted_keys = {(p["date"], round(p["amount"], 2)) for p in posted}
+            posted_or_numbers = {p["docNo"] for p in posted}
 
             first_date = df_raw["date"].iloc[0].strftime("%Y-%m-%d")
             yy, mm = first_date[2:4], first_date[5:7]
@@ -588,7 +598,7 @@ with tab_bank:
             })
             seq += 1
 
-        render_review_and_post(rows, skipped_count)
+        render_review_and_post(rows, skipped_count, existing_or_numbers=posted_or_numbers)
 
     else:
         st.info("Upload a Maybank bank statement CSV or PDF to get started.")
@@ -747,7 +757,7 @@ with tab_dana:
                     if reinclude_idx:
                         st.success(f"{len(reinclude_idx)} row(s) added to Step 2 below.")
 
-        render_review_and_post(rows, skipped_count)
+        render_review_and_post(rows, skipped_count, existing_or_numbers=posted_or_numbers)
 
     else:
         st.info("Upload the monthly dana list Excel file to get started.")

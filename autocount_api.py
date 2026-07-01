@@ -156,14 +156,6 @@ class AutocountClient:
 
         return f"{prefix}{seq:03d}"
 
-    def check_doc_no_exists(self, doc_no: str) -> bool:
-        """Check whether an OR document number already exists in Autocount."""
-        try:
-            r = self._get("/payment/listing", params={"page": 1, "pageSize": 1, "docType": "OR", "docNo": doc_no})
-            return bool(r.get("data"))
-        except Exception:
-            return False
-
     def create_donation_receipt(
         self,
         receipt_date: str,      # "YYYY-MM-DD"
