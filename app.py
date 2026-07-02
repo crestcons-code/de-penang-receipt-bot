@@ -695,7 +695,7 @@ with tab_recon:
         df_result = pd.DataFrame(result_rows)
         found    = df_result["Status"].str.startswith("Found").sum()
         missing  = (df_result["Status"] == "MISSING").sum()
-        mismatch = (df_result["Status"] == "MISMATCH").sum()
+        mismatch = df_result["Status"].isin(["MISMATCH", "DUPLICATE OR"]).sum()
         total    = len(df_result)
 
         c1, c2, c3, c4 = st.columns(4)
@@ -703,14 +703,14 @@ with tab_recon:
         c2.metric("Found in Autocount", found)
         c3.metric("Missing in Autocount", missing,
                   delta=f"-{missing}" if missing else None, delta_color="inverse")
-        c4.metric("Mismatch (same OR, different donor/amount)", mismatch,
+        c4.metric("Mismatch / Duplicate OR", mismatch,
                   delta=f"-{mismatch}" if mismatch else None, delta_color="inverse")
 
         if missing > 0:
             st.error(f"{missing} donation(s) from the {source_label} are NOT found in Autocount!")
         if mismatch > 0:
-            st.warning(f"{mismatch} donation(s) share an OR number with Autocount, but the donor name or amount "
-                       "doesn't match - likely a duplicate/wrong OR number in the source file. Please check these manually.")
+            st.warning(f"{mismatch} row(s) have a problem with their OR number - either the same OR number is used "
+                       "by more than one row in the file, or the donor/amount doesn't match Autocount. Please check these manually.")
         if missing == 0 and mismatch == 0:
             st.success(f"All donations in the {source_label} are recorded in Autocount.")
 
@@ -722,17 +722,18 @@ with tab_recon:
 |--------|---------|
 | **Found** | The OR number exists in Autocount, and donor/amount match. Receipt is correctly recorded. |
 | **Found (by date+amount)** | No OR number on this row, but a record with the same date and amount was found in Autocount. Likely already posted. |
-| **MISMATCH** | The OR number exists in Autocount, but under a different donor name or amount - likely two rows referencing the same OR number by mistake. Check manually. |
+| **DUPLICATE OR** | The same OR number appears on more than one row in this file. Only one receipt exists in Autocount for that number - the extra row(s) are flagged. Fix the OR number in the source file. |
+| **MISMATCH** | The OR number exists in Autocount, but under a different donor name or amount. Check manually. |
 | **MISSING** | This donation cannot be found in Autocount - it may have been skipped or not yet posted. Action required. |
 
-**Colour guide:** ðŸŸ¢ Green = Found &nbsp;&nbsp; ðŸŸ¡ Yellow = Mismatch &nbsp;&nbsp; ðŸ"´ Red = Missing
+**Colour guide:** ðŸŸ¢ Green = Found &nbsp;&nbsp; ðŸŸ¡ Yellow = Mismatch / Duplicate &nbsp;&nbsp; ðŸ"´ Red = Missing
             """)
 
         filter_opt = st.radio("Show:", ["All", "Missing only", "Mismatch only", "Found only"], horizontal=True, key="recon_filter")
         if filter_opt == "Missing only":
             df_show = df_result[df_result["Status"] == "MISSING"]
         elif filter_opt == "Mismatch only":
-            df_show = df_result[df_result["Status"] == "MISMATCH"]
+            df_show = df_result[df_result["Status"].isin(["MISMATCH", "DUPLICATE OR"])]
         elif filter_opt == "Found only":
             df_show = df_result[df_result["Status"].str.startswith("Found")]
         else:
@@ -741,7 +742,7 @@ with tab_recon:
         def _row_color(row):
             if row["Status"] == "MISSING":
                 return ["background-color: #f8d7da"] * len(row)
-            if row["Status"] == "MISMATCH":
+            if row["Status"] in ("MISMATCH", "DUPLICATE OR"):
                 return ["background-color: #fff3cd"] * len(row)
             return ["background-color: #d4edda"] * len(row)
 
@@ -790,12 +791,26 @@ with tab_recon:
 
             ac_or_numbers, ac_by_date_amount, ac_by_docno = _build_ac_lookups(posted_r)
 
+            # Count how many times each OR number appears in the dana list itself
+            _or_counts = df_recon[df_recon["or_number"] != ""]["or_number"].value_counts().to_dict()
+
             result_rows = []
+            _seen_or = set()
             for _, txn in df_recon.iterrows():
                 or_no  = txn["or_number"]
                 amount = round(float(txn["amount"]), 2)
                 donor  = str(txn["donor_name"]).strip().upper()
-                if or_no and or_no in ac_or_numbers:
+                if or_no and _or_counts.get(or_no, 0) > 1 and or_no in _seen_or:
+                    # Same OR number appears more than once in the dana list - only the
+                    # first occurrence is checked against Autocount; the rest are flagged.
+                    status = "DUPLICATE OR"
+                    ac_rec = ac_by_docno.get(or_no)
+                    if ac_rec:
+                        matched = f"{or_no} (Autocount: {ac_rec.get('dealWith','')}, RM {round(float(ac_rec.get('amount',0)),2):,.2f})"
+                    else:
+                        matched = f"{or_no} used by another row in this file"
+                elif or_no and or_no in ac_or_numbers:
+                    _seen_or.add(or_no)
                     ac_rec = ac_by_docno.get(or_no)
                     ac_donor  = (ac_rec or {}).get("dealWith", "")
                     ac_amount = round(float((ac_rec or {}).get("amount", 0)), 2)
