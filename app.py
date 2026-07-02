@@ -688,13 +688,21 @@ with tab_recon:
     st.subheader("Reconciliation - Dana List / Bank Statement vs Autocount")
     st.caption("Verify every donation has been recorded in Autocount.")
 
-    recon_source = st.radio("Reconcile using:", ["Dana List (Excel)", "Bank Statement (CSV)"], horizontal=True)
-    st.divider()
+    recon_col1, recon_col2 = st.columns([3, 1])
+    with recon_col1:
+        recon_source = st.radio("Reconcile using:", ["Dana List (Excel)", "Bank Statement (CSV)"], horizontal=True)
 
     @st.cache_data(ttl=300, show_spinner=False)
     def _fetch_posted_cached(from_d: str, to_d: str) -> list:
         """Cache Autocount OR fetch for 5 minutes so changing filters doesn't re-fetch."""
         return AutocountClient().get_posted_receipts(from_d, to_d)
+
+    with recon_col2:
+        if st.button("🔄 Refresh from Autocount", help="Clear cached data and pull the latest OR records from Autocount now"):
+            _fetch_posted_cached.clear()
+            st.success("Cache cleared - latest data will be fetched.")
+
+    st.divider()
 
     def _render_recon_results(result_rows: list, source_label: str, ac_unmatched: list = None):
         df_result = pd.DataFrame(result_rows)
