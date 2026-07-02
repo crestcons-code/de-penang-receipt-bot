@@ -791,37 +791,52 @@ with tab_recon:
 
             ac_or_numbers, ac_by_date_amount, ac_by_docno = _build_ac_lookups(posted_r)
 
-            # Count how many times each OR number appears in the dana list itself
-            _or_counts = df_recon[df_recon["or_number"] != ""]["or_number"].value_counts().to_dict()
+            # Pool of Autocount records reachable by each OR number: the exact docNo
+            # AND its base (OR-2606153-1 is reachable via both "OR-2606153-1" and
+            # "OR-2606153"). Each record can only be claimed ONCE across the whole run,
+            # so split receipts (4 dana rows sharing one base OR) match one suffix each.
+            import re as _re3
+            _pool_by_or = {}
+            for p in posted_r:
+                doc  = p["docNo"]
+                base = _re3.sub(r"-\d+$", "", doc)
+                _pool_by_or.setdefault(doc, []).append(p)
+                if base != doc:
+                    _pool_by_or.setdefault(base, []).append(p)
+            _claimed = set()
+
+            def _claim_record(or_no, amount):
+                """Claim one unclaimed Autocount record for this OR number.
+                Prefers an exact amount match. Returns (record, amount_matched)."""
+                pool = _pool_by_or.get(or_no, [])
+                for p in pool:
+                    if id(p) not in _claimed and round(float(p["amount"]), 2) == amount:
+                        _claimed.add(id(p))
+                        return p, True
+                for p in pool:
+                    if id(p) not in _claimed:
+                        _claimed.add(id(p))
+                        return p, False
+                return None, False
 
             # For rows without OR numbers: each Autocount record can only match once
             _remaining_da = {k: list(v) for k, v in ac_by_date_amount.items()}
 
             result_rows = []
-            _seen_or = set()
             for _, txn in df_recon.iterrows():
                 or_no  = txn["or_number"]
                 amount = round(float(txn["amount"]), 2)
-                donor  = str(txn["donor_name"]).strip().upper()
-                if or_no and _or_counts.get(or_no, 0) > 1 and or_no in _seen_or:
-                    # Same OR number appears more than once in the dana list - only the
-                    # first occurrence is checked against Autocount; the rest are flagged.
-                    status = "DUPLICATE OR"
-                    ac_rec = ac_by_docno.get(or_no)
-                    if ac_rec:
-                        matched = f"{or_no} (Autocount: {ac_rec.get('dealWith','')}, RM {round(float(ac_rec.get('amount',0)),2):,.2f})"
+                if or_no and or_no in _pool_by_or:
+                    ac_rec, amt_ok = _claim_record(or_no, amount)
+                    if ac_rec is None:
+                        # All Autocount records for this OR already claimed by earlier rows
+                        status  = "DUPLICATE OR"
+                        matched = f"{or_no} - more rows in file than receipts in Autocount"
+                    elif amt_ok:
+                        status, matched = "Found", ac_rec["docNo"]
                     else:
-                        matched = f"{or_no} used by another row in this file"
-                elif or_no and or_no in ac_or_numbers:
-                    _seen_or.add(or_no)
-                    ac_rec = ac_by_docno.get(or_no)
-                    ac_donor  = (ac_rec or {}).get("dealWith", "")
-                    ac_amount = round(float((ac_rec or {}).get("amount", 0)), 2)
-                    if ac_rec is not None and (ac_donor != donor or ac_amount != amount):
-                        status = "MISMATCH"
-                        matched = f"{or_no} (Autocount: {ac_donor}, RM {ac_amount:,.2f})"
-                    else:
-                        status, matched = "Found", or_no
+                        status  = "MISMATCH"
+                        matched = f"{ac_rec['docNo']} (Autocount: {ac_rec.get('dealWith','')}, RM {round(float(ac_rec.get('amount',0)),2):,.2f})"
                 elif not or_no:
                     pool = _remaining_da.get((txn["date"], amount), [])
                     if pool:
