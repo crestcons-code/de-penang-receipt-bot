@@ -691,6 +691,11 @@ with tab_recon:
     recon_source = st.radio("Reconcile using:", ["Dana List (Excel)", "Bank Statement (CSV)"], horizontal=True)
     st.divider()
 
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _fetch_posted_cached(from_d: str, to_d: str) -> list:
+        """Cache Autocount OR fetch for 5 minutes so changing filters doesn't re-fetch."""
+        return AutocountClient().get_posted_receipts(from_d, to_d)
+
     def _render_recon_results(result_rows: list, source_label: str, ac_unmatched: list = None):
         df_result = pd.DataFrame(result_rows)
         found    = df_result["Status"].str.startswith("Found").sum()
@@ -805,8 +810,7 @@ with tab_recon:
                 st.stop()
 
             with st.spinner("Fetching OR records from Autocount..."):
-                client_r = AutocountClient()
-                posted_r = client_r.get_posted_receipts(df_recon["date"].min(), df_recon["date"].max())
+                posted_r = _fetch_posted_cached(df_recon["date"].min(), df_recon["date"].max())
 
             ac_or_numbers, ac_by_date_amount, ac_by_docno = _build_ac_lookups(posted_r)
 
@@ -825,18 +829,25 @@ with tab_recon:
             _claimed = set()
 
             def _claim_record(or_no, amount):
-                """Claim one unclaimed Autocount record for this OR number.
-                Prefers an exact amount match. Returns (record, amount_matched)."""
-                pool = _pool_by_or.get(or_no, [])
+                """Claim unclaimed Autocount record(s) for this OR number.
+                1. Exact single-amount match  -> claim that one
+                2. Amount equals the SUM of all remaining records for this OR
+                   (split receipt: one dana row = OR-xxx-1..-N in Autocount) -> claim all
+                3. Otherwise claim one anyway (flagged as mismatch by caller)
+                Returns (list_of_records, amount_matched)."""
+                pool = [p for p in _pool_by_or.get(or_no, []) if id(p) not in _claimed]
                 for p in pool:
-                    if id(p) not in _claimed and round(float(p["amount"]), 2) == amount:
+                    if round(float(p["amount"]), 2) == amount:
                         _claimed.add(id(p))
-                        return p, True
-                for p in pool:
-                    if id(p) not in _claimed:
+                        return [p], True
+                if len(pool) > 1 and round(sum(float(p["amount"]) for p in pool), 2) == amount:
+                    for p in pool:
                         _claimed.add(id(p))
-                        return p, False
-                return None, False
+                    return pool, True
+                if pool:
+                    _claimed.add(id(pool[0]))
+                    return [pool[0]], False
+                return [], False
 
             # For rows without OR numbers: each Autocount record can only match once
             _remaining_da = {k: list(v) for k, v in ac_by_date_amount.items()}
@@ -847,14 +858,16 @@ with tab_recon:
                 or_no  = txn["or_number"]
                 amount = round(float(txn["amount"]), 2)
                 if or_no and or_no in _pool_by_or:
-                    ac_rec, amt_ok = _claim_record(or_no, amount)
-                    if ac_rec is None:
+                    ac_recs, amt_ok = _claim_record(or_no, amount)
+                    if not ac_recs:
                         # All Autocount records for this OR already claimed by earlier rows
                         status  = "DUPLICATE OR"
                         matched = f"{or_no} - more rows in file than receipts in Autocount"
                     elif amt_ok:
-                        status, matched = "Found", ac_rec["docNo"]
+                        status  = "Found"
+                        matched = ", ".join(p["docNo"] for p in ac_recs)
                     else:
+                        ac_rec  = ac_recs[0]
                         status  = "MISMATCH"
                         matched = f"{ac_rec['docNo']} (Autocount: {ac_rec.get('dealWith','')}, RM {round(float(ac_rec.get('amount',0)),2):,.2f})"
                 elif not or_no:
@@ -906,10 +919,9 @@ with tab_recon:
                 st.stop()
 
             with st.spinner("Fetching OR records from Autocount..."):
-                client_r = AutocountClient()
                 from_r   = df_bank["date"].min().strftime("%Y-%m-%d")
                 to_r     = df_bank["date"].max().strftime("%Y-%m-%d")
-                posted_r = client_r.get_posted_receipts(from_r, to_r)
+                posted_r = _fetch_posted_cached(from_r, to_r)
 
             _, ac_by_date_amount, _ = _build_ac_lookups(posted_r)
 
