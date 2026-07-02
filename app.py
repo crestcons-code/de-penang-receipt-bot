@@ -57,16 +57,36 @@ authenticator = stauth.Authenticate(
     _users_data,
     cookie_name="dep_receipt_app",
     cookie_key="dep_secret_key_2026",
-    cookie_expiry_days=1,
+    cookie_expiry_days=30,
 )
 
-authenticator.login()
+# Silent cookie re-login (no form rendered) - keeps returning users signed in
+authenticator.login(location="unrendered")
 
-if st.session_state.get("authentication_status") is False:
-    st.error("Incorrect username or password.")
-    st.stop()
-elif st.session_state.get("authentication_status") is None:
-    st.stop()
+if not st.session_state.get("authentication_status"):
+    # Custom login form: pick your name from a dropdown instead of typing the username
+    st.title("DE Penang Autocount Donation Receipts Apps")
+    _all_users = _users_data.get("usernames", {})
+    _display_to_username = {f"{v.get('name', u)} ({u})": u for u, v in _all_users.items()}
+
+    with st.form("dropdown_login"):
+        _sel_display = st.selectbox("Select user", list(_display_to_username.keys()))
+        _pwd = st.text_input("Password", type="password")
+        _login_btn = st.form_submit_button("Login", type="primary", use_container_width=True)
+
+    if _login_btn:
+        _sel_username = _display_to_username[_sel_display]
+        try:
+            _ok = authenticator.authentication_controller.login(username=_sel_username, password=_pwd)
+        except Exception:
+            _ok = False
+        if _ok is False or not st.session_state.get("authentication_status"):
+            st.error("Incorrect password.")
+            st.stop()
+        authenticator.cookie_controller.set_cookie()
+        st.rerun()
+    else:
+        st.stop()
 
 _current_user     = st.session_state.get("username", "")
 _current_role     = _users_data.get("usernames", {}).get(_current_user, {}).get("role", "user")
