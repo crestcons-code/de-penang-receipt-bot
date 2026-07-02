@@ -952,8 +952,20 @@ with tab_recon:
                     "matched": None,
                 })
 
-            # Pass A - whole receipts first
+            # Pass A0 - whole receipts where the donor name ALSO matches (most precise)
             for r in rows_info:
+                donor_key = str(r["donor"]).strip().upper()
+                pool = [p for p in _by_da.get((r["date"], r["amount"]), [])
+                        if p["docNo"] not in _claimed_docs and _base_of(p["docNo"]) is None
+                        and donor_key and p.get("dealWith", "") == donor_key]
+                if pool:
+                    _claimed_docs.add(pool[0]["docNo"])
+                    r["matched"] = pool[0]["docNo"]
+
+            # Pass A - whole receipts by date+amount
+            for r in rows_info:
+                if r["matched"]:
+                    continue
                 pool = [p for p in _by_da.get((r["date"], r["amount"]), [])
                         if p["docNo"] not in _claimed_docs and _base_of(p["docNo"]) is None]
                 if pool:
