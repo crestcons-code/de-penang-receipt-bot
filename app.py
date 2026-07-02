@@ -691,7 +691,7 @@ with tab_recon:
     recon_source = st.radio("Reconcile using:", ["Dana List (Excel)", "Bank Statement (CSV)"], horizontal=True)
     st.divider()
 
-    def _render_recon_results(result_rows: list, source_label: str):
+    def _render_recon_results(result_rows: list, source_label: str, ac_unmatched: list = None):
         df_result = pd.DataFrame(result_rows)
         found    = df_result["Status"].str.startswith("Found").sum()
         missing  = (df_result["Status"] == "MISSING").sum()
@@ -757,6 +757,25 @@ with tab_recon:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+        # Reverse direction: OR records in Autocount that no row in the file matched
+        if ac_unmatched is not None:
+            st.divider()
+            st.subheader(f"In Autocount but NOT in {source_label}")
+            if not ac_unmatched:
+                st.success(f"Every Autocount OR in this date range was matched by a row in the {source_label}.")
+            else:
+                st.error(f"{len(ac_unmatched)} OR record(s) exist in Autocount but were NOT matched by any row "
+                         f"in the {source_label}. These may be extra/duplicate postings, or rows missing from your file.")
+                df_unmatched = pd.DataFrame(ac_unmatched).rename(columns={
+                    "docNo": "OR Number", "date": "Date", "dealWith": "Donor Name", "amount": "Amount (RM)"
+                }).sort_values("OR Number")
+                st.dataframe(df_unmatched, use_container_width=True, hide_index=True)
+                buf3 = io.BytesIO()
+                df_unmatched.to_excel(buf3, index=False)
+                st.download_button("Download Unmatched Autocount OR List", buf3.getvalue(),
+                                   file_name="autocount_unmatched_or.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
     def _build_ac_lookups(posted: list):
         import re as _re2
         ac_or_numbers = set()
@@ -821,6 +840,7 @@ with tab_recon:
 
             # For rows without OR numbers: each Autocount record can only match once
             _remaining_da = {k: list(v) for k, v in ac_by_date_amount.items()}
+            _consumed_docnos = set()
 
             result_rows = []
             for _, txn in df_recon.iterrows():
@@ -841,6 +861,7 @@ with tab_recon:
                     pool = _remaining_da.get((txn["date"], amount), [])
                     if pool:
                         matched = pool.pop(0)   # consume one Autocount record
+                        _consumed_docnos.add(matched)
                         status  = "Found (by date+amount)"
                     else:
                         matched = ""
@@ -860,7 +881,11 @@ with tab_recon:
                     "WhatsApp Mobile": txn.get("mobile", ""),
                 })
 
-            _render_recon_results(result_rows, "Dana List")
+            # Autocount records that nothing in the dana list claimed
+            ac_unmatched = [p for p in posted_r
+                            if id(p) not in _claimed and p["docNo"] not in _consumed_docnos]
+
+            _render_recon_results(result_rows, "Dana List", ac_unmatched=ac_unmatched)
         else:
             st.info("Upload the monthly dana list Excel file to run the reconciliation check.")
 
@@ -892,6 +917,7 @@ with tab_recon:
             # lookup and consume matches so two bank rows with the same date+amount
             # can't both claim the same single receipt.
             _remaining = {k: list(v) for k, v in ac_by_date_amount.items()}
+            _consumed_bank = set()
 
             result_rows = []
             for _, txn in df_bank.iterrows():
@@ -900,6 +926,7 @@ with tab_recon:
                 pool     = _remaining.get((txn_date, amount), [])
                 if pool:
                     matched = pool.pop(0)   # consume one Autocount record
+                    _consumed_bank.add(matched)
                     status  = "Found (by date+amount)"
                 else:
                     matched = ""
@@ -913,7 +940,10 @@ with tab_recon:
                     "Amount (RM)":    amount,
                 })
 
-            _render_recon_results(result_rows, "Bank Statement")
+            # Autocount records that no bank transaction matched
+            ac_unmatched_bank = [p for p in posted_r if p["docNo"] not in _consumed_bank]
+
+            _render_recon_results(result_rows, "Bank Statement", ac_unmatched=ac_unmatched_bank)
         else:
             st.info("Upload the Maybank bank statement CSV to run the reconciliation check.")
 
