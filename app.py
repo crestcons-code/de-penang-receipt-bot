@@ -693,19 +693,25 @@ with tab_recon:
 
     def _render_recon_results(result_rows: list, source_label: str):
         df_result = pd.DataFrame(result_rows)
-        found   = df_result["Status"].str.startswith("Found").sum()
-        missing = (df_result["Status"] == "MISSING").sum()
-        total   = len(df_result)
+        found    = df_result["Status"].str.startswith("Found").sum()
+        missing  = (df_result["Status"] == "MISSING").sum()
+        mismatch = (df_result["Status"] == "MISMATCH").sum()
+        total    = len(df_result)
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric(f"Total in {source_label}", total)
         c2.metric("Found in Autocount", found)
         c3.metric("Missing in Autocount", missing,
                   delta=f"-{missing}" if missing else None, delta_color="inverse")
+        c4.metric("Mismatch (same OR, different donor/amount)", mismatch,
+                  delta=f"-{mismatch}" if mismatch else None, delta_color="inverse")
 
         if missing > 0:
             st.error(f"{missing} donation(s) from the {source_label} are NOT found in Autocount!")
-        else:
+        if mismatch > 0:
+            st.warning(f"{mismatch} donation(s) share an OR number with Autocount, but the donor name or amount "
+                       "doesn't match - likely a duplicate/wrong OR number in the source file. Please check these manually.")
+        if missing == 0 and mismatch == 0:
             st.success(f"All donations in the {source_label} are recorded in Autocount.")
 
         st.divider()
@@ -714,16 +720,19 @@ with tab_recon:
             st.markdown("""
 | Status | Meaning |
 |--------|---------|
-| **Found** | The OR number exists in Autocount. Receipt is recorded. |
+| **Found** | The OR number exists in Autocount, and donor/amount match. Receipt is correctly recorded. |
 | **Found (by date+amount)** | No OR number on this row, but a record with the same date and amount was found in Autocount. Likely already posted. |
+| **MISMATCH** | The OR number exists in Autocount, but under a different donor name or amount - likely two rows referencing the same OR number by mistake. Check manually. |
 | **MISSING** | This donation cannot be found in Autocount - it may have been skipped or not yet posted. Action required. |
 
-**Colour guide:** ðŸŸ¢ Green = Found &nbsp;&nbsp; ðŸ"´ Red = Missing
+**Colour guide:** ðŸŸ¢ Green = Found &nbsp;&nbsp; ðŸŸ¡ Yellow = Mismatch &nbsp;&nbsp; ðŸ"´ Red = Missing
             """)
 
-        filter_opt = st.radio("Show:", ["All", "Missing only", "Found only"], horizontal=True, key="recon_filter")
+        filter_opt = st.radio("Show:", ["All", "Missing only", "Mismatch only", "Found only"], horizontal=True, key="recon_filter")
         if filter_opt == "Missing only":
             df_show = df_result[df_result["Status"] == "MISSING"]
+        elif filter_opt == "Mismatch only":
+            df_show = df_result[df_result["Status"] == "MISMATCH"]
         elif filter_opt == "Found only":
             df_show = df_result[df_result["Status"].str.startswith("Found")]
         else:
@@ -732,13 +741,15 @@ with tab_recon:
         def _row_color(row):
             if row["Status"] == "MISSING":
                 return ["background-color: #f8d7da"] * len(row)
+            if row["Status"] == "MISMATCH":
+                return ["background-color: #fff3cd"] * len(row)
             return ["background-color: #d4edda"] * len(row)
 
         st.dataframe(df_show.style.apply(_row_color, axis=1), use_container_width=True, hide_index=True)
 
         buf = io.BytesIO()
         df_show.to_excel(buf, index=False)
-        label = {"All": "All", "Missing only": "Missing Only", "Found only": "Found Only"}.get(filter_opt, "All")
+        label = {"All": "All", "Missing only": "Missing Only", "Mismatch only": "Mismatch Only", "Found only": "Found Only"}.get(filter_opt, "All")
         st.download_button(
             f"Download Reconciliation Report ({label})", buf.getvalue(),
             file_name=f"reconciliation_report_{label.lower().replace(' ','_')}.xlsx",
@@ -748,15 +759,19 @@ with tab_recon:
     def _build_ac_lookups(posted: list):
         import re as _re2
         ac_or_numbers = set()
+        ac_by_docno = {}  # docNo (and base docNo) -> record {dealWith, amount, date}
         for p in posted:
             doc = p["docNo"]
+            base = _re2.sub(r"-\d+$", "", doc)
             ac_or_numbers.add(doc)
-            ac_or_numbers.add(_re2.sub(r"-\d+$", "", doc))
+            ac_or_numbers.add(base)
+            ac_by_docno.setdefault(doc, p)
+            ac_by_docno.setdefault(base, p)
         ac_by_date_amount = {}
         for p in posted:
             key = (p["date"], round(p["amount"], 2))
             ac_by_date_amount.setdefault(key, []).append(p["docNo"])
-        return ac_or_numbers, ac_by_date_amount
+        return ac_or_numbers, ac_by_date_amount, ac_by_docno
 
     # â"€â"€ Dana List reconciliation
     if recon_source == "Dana List (Excel)":
@@ -773,14 +788,22 @@ with tab_recon:
                 client_r = AutocountClient()
                 posted_r = client_r.get_posted_receipts(df_recon["date"].min(), df_recon["date"].max())
 
-            ac_or_numbers, ac_by_date_amount = _build_ac_lookups(posted_r)
+            ac_or_numbers, ac_by_date_amount, ac_by_docno = _build_ac_lookups(posted_r)
 
             result_rows = []
             for _, txn in df_recon.iterrows():
                 or_no  = txn["or_number"]
                 amount = round(float(txn["amount"]), 2)
+                donor  = str(txn["donor_name"]).strip().upper()
                 if or_no and or_no in ac_or_numbers:
-                    status, matched = "Found", or_no
+                    ac_rec = ac_by_docno.get(or_no)
+                    ac_donor  = (ac_rec or {}).get("dealWith", "")
+                    ac_amount = round(float((ac_rec or {}).get("amount", 0)), 2)
+                    if ac_rec is not None and (ac_donor != donor or ac_amount != amount):
+                        status = "MISMATCH"
+                        matched = f"{or_no} (Autocount: {ac_donor}, RM {ac_amount:,.2f})"
+                    else:
+                        status, matched = "Found", or_no
                 elif not or_no:
                     matches = ac_by_date_amount.get((txn["date"], amount), [])
                     status  = "Found (by date+amount)" if matches else "MISSING"
@@ -826,7 +849,7 @@ with tab_recon:
                 to_r     = df_bank["date"].max().strftime("%Y-%m-%d")
                 posted_r = client_r.get_posted_receipts(from_r, to_r)
 
-            _, ac_by_date_amount = _build_ac_lookups(posted_r)
+            _, ac_by_date_amount, _ = _build_ac_lookups(posted_r)
 
             result_rows = []
             for _, txn in df_bank.iterrows():
