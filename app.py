@@ -923,37 +923,79 @@ with tab_recon:
                 to_r     = df_bank["date"].max().strftime("%Y-%m-%d")
                 posted_r = _fetch_posted_cached(from_r, to_r)
 
-            _, ac_by_date_amount, _ = _build_ac_lookups(posted_r)
+            # Match bank rows to Autocount records in 3 passes so split receipts work:
+            #   A. exact date+amount match against whole (non-suffixed) receipts
+            #   B. one bank row = SUM of a suffixed group (OR-xxx-1..-N) on the same date
+            #   C. exact date+amount match against leftover suffixed receipts
+            # Each Autocount record can only be claimed once.
+            import re as _re4
 
-            # Each Autocount record can only match ONE bank transaction - copy the
-            # lookup and consume matches so two bank rows with the same date+amount
-            # can't both claim the same single receipt.
-            _remaining = {k: list(v) for k, v in ac_by_date_amount.items()}
-            _consumed_bank = set()
+            def _base_of(doc):
+                m = _re4.match(r"^(OR-\d{7})-\d+$", doc)
+                return m.group(1) if m else None
+
+            _by_da   = {}
+            _groups  = {}
+            for p in posted_r:
+                _by_da.setdefault((p["date"], round(float(p["amount"]), 2)), []).append(p)
+                b = _base_of(p["docNo"])
+                if b:
+                    _groups.setdefault((b, p["date"]), []).append(p)
+            _claimed_docs = set()
+
+            rows_info = []
+            for _, txn in df_bank.iterrows():
+                rows_info.append({
+                    "date":    txn["date"].strftime("%Y-%m-%d"),
+                    "amount":  round(float(txn["credit"]), 2),
+                    "donor":   txn["donor_name"],
+                    "matched": None,
+                })
+
+            # Pass A - whole receipts first
+            for r in rows_info:
+                pool = [p for p in _by_da.get((r["date"], r["amount"]), [])
+                        if p["docNo"] not in _claimed_docs and _base_of(p["docNo"]) is None]
+                if pool:
+                    _claimed_docs.add(pool[0]["docNo"])
+                    r["matched"] = pool[0]["docNo"]
+
+            # Pass B - split receipt groups (sum of remaining suffixes == bank amount)
+            for r in rows_info:
+                if r["matched"]:
+                    continue
+                for (b, d), grp in _groups.items():
+                    if d != r["date"]:
+                        continue
+                    un = [p for p in grp if p["docNo"] not in _claimed_docs]
+                    if un and round(sum(float(p["amount"]) for p in un), 2) == r["amount"]:
+                        for p in un:
+                            _claimed_docs.add(p["docNo"])
+                        r["matched"] = ", ".join(sorted(p["docNo"] for p in un))
+                        break
+
+            # Pass C - leftover suffixed receipts by exact date+amount
+            for r in rows_info:
+                if r["matched"]:
+                    continue
+                pool = [p for p in _by_da.get((r["date"], r["amount"]), [])
+                        if p["docNo"] not in _claimed_docs]
+                if pool:
+                    _claimed_docs.add(pool[0]["docNo"])
+                    r["matched"] = pool[0]["docNo"]
 
             result_rows = []
-            for _, txn in df_bank.iterrows():
-                txn_date = txn["date"].strftime("%Y-%m-%d")
-                amount   = round(float(txn["credit"]), 2)
-                pool     = _remaining.get((txn_date, amount), [])
-                if pool:
-                    matched = pool.pop(0)   # consume one Autocount record
-                    _consumed_bank.add(matched)
-                    status  = "Found (by date+amount)"
-                else:
-                    matched = ""
-                    status  = "MISSING"
-
+            for r in rows_info:
                 result_rows.append({
-                    "Status":         status,
-                    "Matched AC Doc": matched,
-                    "Date":           txn_date,
-                    "Donor Name":     txn["donor_name"],
-                    "Amount (RM)":    amount,
+                    "Status":         "Found (by date+amount)" if r["matched"] else "MISSING",
+                    "Matched AC Doc": r["matched"] or "",
+                    "Date":           r["date"],
+                    "Donor Name":     r["donor"],
+                    "Amount (RM)":    r["amount"],
                 })
 
             # Autocount records that no bank transaction matched
-            ac_unmatched_bank = [p for p in posted_r if p["docNo"] not in _consumed_bank]
+            ac_unmatched_bank = [p for p in posted_r if p["docNo"] not in _claimed_docs]
 
             _render_recon_results(result_rows, "Bank Statement", ac_unmatched=ac_unmatched_bank)
         else:
