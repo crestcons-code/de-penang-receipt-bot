@@ -794,6 +794,9 @@ with tab_recon:
             # Count how many times each OR number appears in the dana list itself
             _or_counts = df_recon[df_recon["or_number"] != ""]["or_number"].value_counts().to_dict()
 
+            # For rows without OR numbers: each Autocount record can only match once
+            _remaining_da = {k: list(v) for k, v in ac_by_date_amount.items()}
+
             result_rows = []
             _seen_or = set()
             for _, txn in df_recon.iterrows():
@@ -820,9 +823,13 @@ with tab_recon:
                     else:
                         status, matched = "Found", or_no
                 elif not or_no:
-                    matches = ac_by_date_amount.get((txn["date"], amount), [])
-                    status  = "Found (by date+amount)" if matches else "MISSING"
-                    matched = ", ".join(matches)
+                    pool = _remaining_da.get((txn["date"], amount), [])
+                    if pool:
+                        matched = pool.pop(0)   # consume one Autocount record
+                        status  = "Found (by date+amount)"
+                    else:
+                        matched = ""
+                        status  = "MISSING"
                 else:
                     status, matched = "MISSING", ""
 
@@ -866,13 +873,22 @@ with tab_recon:
 
             _, ac_by_date_amount, _ = _build_ac_lookups(posted_r)
 
+            # Each Autocount record can only match ONE bank transaction - copy the
+            # lookup and consume matches so two bank rows with the same date+amount
+            # can't both claim the same single receipt.
+            _remaining = {k: list(v) for k, v in ac_by_date_amount.items()}
+
             result_rows = []
             for _, txn in df_bank.iterrows():
                 txn_date = txn["date"].strftime("%Y-%m-%d")
                 amount   = round(float(txn["credit"]), 2)
-                matches  = ac_by_date_amount.get((txn_date, amount), [])
-                status   = "Found (by date+amount)" if matches else "MISSING"
-                matched  = ", ".join(matches)
+                pool     = _remaining.get((txn_date, amount), [])
+                if pool:
+                    matched = pool.pop(0)   # consume one Autocount record
+                    status  = "Found (by date+amount)"
+                else:
+                    matched = ""
+                    status  = "MISSING"
 
                 result_rows.append({
                     "Status":         status,
