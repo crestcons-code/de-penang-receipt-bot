@@ -932,11 +932,12 @@ with tab_recon:
 
     # â"€â"€ Bank Statement reconciliation
     else:
-        recon_csv = st.file_uploader("Upload Maybank Bank Statement CSV", type=["csv"], key="recon_bank_upload")
+        recon_csv = st.file_uploader("Upload Maybank Bank Statement (CSV or PDF)", type=["csv", "pdf"], key="recon_bank_upload")
 
         if recon_csv:
             import tempfile, os
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+            _suffix = ".pdf" if recon_csv.name.lower().endswith(".pdf") else ".csv"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=_suffix) as tmp:
                 tmp.write(recon_csv.read())
                 tmp_path = tmp.name
             try:
