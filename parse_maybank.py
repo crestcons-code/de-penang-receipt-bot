@@ -72,44 +72,104 @@ def parse_csv(filepath: str) -> pd.DataFrame:
 
 
 def parse_pdf(filepath: str) -> pd.DataFrame:
-    """Parse Maybank PDF statement - extracts the transaction table."""
-    rows = []
+    """
+    Parse Maybank PDF statement (text layout, no table grid).
+    Transaction line format:
+        DD/MM [DD/MM] DESCRIPTION  9,999.99+  99,999.99[DR]
+    where + = cash-in, - = cash-out. Continuation lines that follow hold the
+    sender/beneficiary name (usually ending with '*') and the transfer purpose.
+    Returns the same standardised columns as parse_csv (cash-in rows only).
+    """
+    import re as _re
+
+    txn_re = _re.compile(
+        r"^(\d{2}/\d{2})(?:\s+\d{2}/\d{2})?\s+(.*?)\s+([\d,]*\.\d{2})([+-])\s+[\d,]*\.\d{2}(?:DR)?$"
+    )
+    stop_re = _re.compile(r"BAKI LEGAR|LEDGER BALANCE|^Perhatian|ENDING BALANCE|TOTAL DEBIT|TOTAL CREDIT")
+    year_re = _re.compile(r":\s*(\d{2})/(\d{2})/(\d{2})\b")
+
+    stmt_year = None
+    txns = []       # each: {"date_dm","desc_line","amount","sign","extra":[...]}
+    current = None
+
     with pdfplumber.open(filepath) as pdf:
         for page in pdf.pages:
-            table = page.extract_table()
-            if not table:
-                continue
-            for row in table:
-                if row and len(row) >= 4:
-                    rows.append(row)
+            text = page.extract_text() or ""
+            lines = text.splitlines()
+
+            # Statement year from "TARIKH PENYATA ... : 30/06/26" on page 1
+            if stmt_year is None:
+                for ln in lines:
+                    m = year_re.search(ln)
+                    if m:
+                        stmt_year = 2000 + int(m.group(3))
+                        break
+
+            in_txn_area = False
+            for ln in lines:
+                ln = ln.strip()
+                if not in_txn_area:
+                    # Transactions start after the column header line
+                    if "TRANSACTION DESCRIPTION" in ln or "ENTRY DATE" in ln:
+                        in_txn_area = True
+                    continue
+                if stop_re.search(ln):
+                    current = None
+                    break
+                m = txn_re.match(ln)
+                if m:
+                    current = {
+                        "date_dm":   m.group(1),
+                        "desc_line": m.group(2).strip(),
+                        "amount":    float(m.group(3).replace(",", "")),
+                        "sign":      m.group(4),
+                        "extra":     [],
+                    }
+                    txns.append(current)
+                elif current is not None and ln:
+                    current["extra"].append(ln)
+
+    if not txns:
+        raise ValueError(f"No transactions found in PDF: {filepath}")
+
+    if stmt_year is None:
+        stmt_year = pd.Timestamp.today().year
+
+    rows = []
+    for t in txns:
+        if t["sign"] != "+":
+            continue  # cash-in only
+
+        # First extra line ending with '*' is the sender/beneficiary name
+        beneficiary = ""
+        purpose_parts = []
+        for ln in t["extra"]:
+            if not beneficiary and ln.endswith("*"):
+                beneficiary = ln.rstrip("*").strip()
+            else:
+                purpose_parts.append(ln)
+        if not beneficiary and t["extra"]:
+            beneficiary = t["extra"][0]
+            purpose_parts = t["extra"][1:]
+
+        dd, mm = t["date_dm"].split("/")
+        date = pd.Timestamp(year=stmt_year, month=int(mm), day=int(dd))
+
+        gl_text = " ".join([t["desc_line"]] + purpose_parts + ([beneficiary] if beneficiary else []))
+
+        rows.append({
+            "date":        date,
+            "donor_name":  beneficiary,
+            "description": beneficiary,
+            "gl_text":     gl_text,
+            "credit":      t["amount"],
+            "source_file": Path(filepath).name,
+        })
 
     if not rows:
-        raise ValueError(f"No table data found in PDF: {filepath}")
+        raise ValueError(f"No cash-in transactions found in PDF: {filepath}")
 
-    df = pd.DataFrame(rows[1:], columns=rows[0])
-    df.columns = df.columns.str.strip().str.lower()
-
-    col_map = {}
-    for col in df.columns:
-        if "date" in col:
-            col_map[col] = "date"
-        elif "desc" in col or "particular" in col or "narration" in col:
-            col_map[col] = "description"
-        elif "credit" in col or "deposits" in col or "cash-in" in col:
-            col_map[col] = "credit"
-    df = df.rename(columns=col_map)
-
-    df["credit"] = pd.to_numeric(
-        df["credit"].astype(str).str.replace("RM", "").str.replace(",", "").str.strip(),
-        errors="coerce"
-    )
-    df = df[df["credit"] > 0].copy()
-    df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
-    df = df.dropna(subset=["date"])
-    df["description"] = df["description"].astype(str).str.strip()
-    df["source_file"] = Path(filepath).name
-
-    return df[["date", "description", "credit", "source_file"]].reset_index(drop=True)
+    return pd.DataFrame(rows)[["date", "donor_name", "description", "gl_text", "credit", "source_file"]].reset_index(drop=True)
 
 
 def load_statement(filepath: str) -> pd.DataFrame:
