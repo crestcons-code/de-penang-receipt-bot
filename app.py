@@ -65,7 +65,7 @@ authenticator.login(location="unrendered")
 
 if not st.session_state.get("authentication_status"):
     # Custom login form: pick your name from a dropdown instead of typing the username
-    st.markdown('<h1 style="color:#dc2626;">DE Penang Autocount Donation Receipts Apps</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 style="color:#2563eb;">DE Penang Autocount Donation Receipts Apps</h1>', unsafe_allow_html=True)
     _all_users = _users_data.get("usernames", {})
     _display_to_username = {f"{v.get('name', u)} ({u})": u for u, v in _all_users.items()}
 
@@ -457,7 +457,7 @@ Follow these steps in **Autocount Cloud** to print and save all successfully pos
 
 
 # â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-st.markdown('<h1 style="color:#dc2626;">DE Penang Autocount Donation Receipts Apps</h1>', unsafe_allow_html=True)
+st.markdown('<h1 style="color:#2563eb;">DE Penang Autocount Donation Receipts Apps</h1>', unsafe_allow_html=True)
 st.caption("Persatuan Dhamma Malaysia (Malaysia Dhamma Society - Penang Branch)")
 st.divider()
 
