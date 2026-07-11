@@ -7,3 +7,7 @@ usernames:
     name: bk
     password: $2b$12$q2OCd1uWqcXqgdmbTv7RweXAXB.ZZWbuf4ecghOr8Iw2Y8ZGY4HKy
     role: admin
+  eancheng:
+    name: Lee Ean Cheng
+    password: $2b$12$Queins0R29igmF9fVuXVTeYXd9UFk4I7Crz.6hUSpJm96Vo1dICJS
+    role: user
