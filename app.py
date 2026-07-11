@@ -1089,15 +1089,40 @@ with tab_print:
             if print_dana_file:
                 try:
                     df_pd, _ = load_dana_list(print_dana_file, skip_blank_gl=False)
+                    import re as _re5
+
+                    # Primary: match by OR number (column G of the dana list)
                     _mobile_by_or = {r["or_number"]: r.get("mobile", "")
                                      for _, r in df_pd.iterrows() if r["or_number"]}
-                    import re as _re5
-                    def _wa_lookup(doc):
+
+                    # Fallback: match by date+amount+donor, then date+amount, for
+                    # dana lists where the OR column was left blank
+                    _mobile_by_dad = {}
+                    _mobile_by_da  = {}
+                    for _, r in df_pd.iterrows():
+                        mob = r.get("mobile", "")
+                        if mob:
+                            amt = round(float(r["amount"]), 2)
+                            donor_key = str(r["donor_name"]).strip().upper()
+                            _mobile_by_dad.setdefault((r["date"], amt, donor_key), []).append(mob)
+                            _mobile_by_da.setdefault((r["date"], amt), []).append(mob)
+
+                    def _wa_lookup(row):
+                        doc = row["OR Number"]
                         if doc in _mobile_by_or:
                             return _mobile_by_or[doc]
                         base = _re5.sub(r"-\d+$", "", doc)
-                        return _mobile_by_or.get(base, "")
-                    df_lookup["WhatsApp Mobile"] = df_lookup["OR Number"].map(_wa_lookup)
+                        if base in _mobile_by_or:
+                            return _mobile_by_or[base]
+                        amt = round(float(row["Amount (RM)"]), 2)
+                        donor_key = str(row["Donor Name"]).strip().upper()
+                        pool = _mobile_by_dad.get((row["Date"], amt, donor_key), [])
+                        if pool:
+                            return pool.pop(0)
+                        pool = _mobile_by_da.get((row["Date"], amt), [])
+                        return pool.pop(0) if pool else ""
+
+                    df_lookup["WhatsApp Mobile"] = df_lookup.apply(_wa_lookup, axis=1)
                     _wa_count = (df_lookup["WhatsApp Mobile"] != "").sum()
                     st.info(f"WhatsApp numbers added for {_wa_count} of {len(df_lookup)} OR(s) from the dana list.")
                 except Exception as e:
