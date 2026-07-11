@@ -1098,8 +1098,13 @@ with tab_print:
                         base = _re5.sub(r"-\d+$", "", doc)
                         return _mobile_by_or.get(base, "")
                     df_lookup["WhatsApp Mobile"] = df_lookup["OR Number"].map(_wa_lookup)
+                    _wa_count = (df_lookup["WhatsApp Mobile"] != "").sum()
+                    st.info(f"WhatsApp numbers added for {_wa_count} of {len(df_lookup)} OR(s) from the dana list.")
                 except Exception as e:
                     st.warning(f"Could not read dana list for WhatsApp numbers: {e}")
+            else:
+                st.info("💡 To include WhatsApp numbers, upload the dana list Excel in the box above — "
+                        "Autocount does not store phone numbers, so they come from the dana list.")
 
             st.success(f"Found {len(df_lookup)} OR record(s) totalling RM {df_lookup['Amount (RM)'].sum():,.2f}")
             st.dataframe(df_lookup, use_container_width=True, hide_index=True)
