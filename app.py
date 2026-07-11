@@ -1068,6 +1068,12 @@ with tab_print:
                 )
             st.session_state["print_lookup_results"] = lookup_results
 
+    # Optional: upload the dana list to add WhatsApp numbers (not stored in Autocount)
+    print_dana_file = st.file_uploader(
+        "Optional: upload Dana List Excel to include WhatsApp numbers",
+        type=["xlsx"], key="print_dana_upload",
+    )
+
     if "print_lookup_results" in st.session_state:
         lookup_results = st.session_state["print_lookup_results"]
         if not lookup_results:
@@ -1077,8 +1083,32 @@ with tab_print:
             df_lookup = df_lookup.rename(columns={
                 "docNo": "OR Number", "date": "Date", "dealWith": "Donor Name", "amount": "Amount (RM)"
             })
+
+            # Join WhatsApp numbers from the dana list by OR number (suffixed ORs
+            # like OR-2606153-1 fall back to their base number OR-2606153)
+            if print_dana_file:
+                try:
+                    df_pd, _ = load_dana_list(print_dana_file, skip_blank_gl=False)
+                    _mobile_by_or = {r["or_number"]: r.get("mobile", "")
+                                     for _, r in df_pd.iterrows() if r["or_number"]}
+                    import re as _re5
+                    def _wa_lookup(doc):
+                        if doc in _mobile_by_or:
+                            return _mobile_by_or[doc]
+                        base = _re5.sub(r"-\d+$", "", doc)
+                        return _mobile_by_or.get(base, "")
+                    df_lookup["WhatsApp Mobile"] = df_lookup["OR Number"].map(_wa_lookup)
+                except Exception as e:
+                    st.warning(f"Could not read dana list for WhatsApp numbers: {e}")
+
             st.success(f"Found {len(df_lookup)} OR record(s) totalling RM {df_lookup['Amount (RM)'].sum():,.2f}")
             st.dataframe(df_lookup, use_container_width=True, hide_index=True)
+
+            buf_x = io.BytesIO()
+            df_lookup.to_excel(buf_x, index=False)
+            st.download_button("Download OR Summary (Excel)", buf_x.getvalue(),
+                               file_name="batch_or_summary.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
             st.divider()
             st.markdown("""
