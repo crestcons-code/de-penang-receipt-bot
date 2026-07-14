@@ -196,14 +196,15 @@ class AutocountClient:
                     "currencyCode": "MYR",
                     "currencyRate": 1,
                     "journalType": "BANK",
-                    "dealWith": donor_name,
-                    "description": description or donor_name,
+                    # Autocount limits: DealWith max 100 chars, master Description max 80
+                    "dealWith": donor_name[:100],
+                    "description": (description or donor_name)[:80],
                 },
                 "details": (
                     [
                         {
                             "accNo": donation_gl_code,
-                            "description": d["description"],
+                            "description": str(d["description"])[:100],   # detail Description max 100
                             "amount": d["amount"],
                             **({"deptNo": department} if department else {}),
                         }
@@ -213,7 +214,7 @@ class AutocountClient:
                     [
                         {
                             "accNo": donation_gl_code,
-                            "description": description or donor_name,
+                            "description": (description or donor_name)[:100],
                             "amount": amount,
                             **({"deptNo": department} if department else {}),
                         }
