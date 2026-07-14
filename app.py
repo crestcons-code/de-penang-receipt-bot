@@ -328,7 +328,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
             "Description":      st.column_config.TextColumn("Description (in Autocount)"),
             "Department":       st.column_config.TextColumn("Department"),
             "Amount (RM)":      st.column_config.NumberColumn("Amount (RM)", format="RM %.2f", disabled=True),
-            "WhatsApp Mobile":  st.column_config.TextColumn("WhatsApp Mobile", disabled=True),
+            "WhatsApp Mobile":  st.column_config.TextColumn("WhatsApp Mobile", help="Edit to add or correct the donor's WhatsApp number"),
         },
         use_container_width=True,
         hide_index=True,
