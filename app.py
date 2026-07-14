@@ -152,10 +152,11 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
         txn_date = pd.to_datetime(raw_date).strftime("%Y-%m-%d")
 
         # Donor name: col J (Donor name on Receipt) first, fall back to col D (Beneficiary)
+        # Multi-donor cells have one donor per line - join them all onto the one receipt
         donor = str(r[col_donor]).strip() if (col_donor and pd.notna(r[col_donor])) else ""
         if not donor or donor.lower() in ("nan", "none", "-", "n/a"):
             donor = str(r[col_bene]).strip().rstrip("*").strip()
-        donor = donor.splitlines()[0].strip() if donor else ""
+        donor = ", ".join(l.strip() for l in donor.splitlines() if l.strip()) if donor else ""
 
         # OR number (may be pre-filled or blank)
         or_no = str(r[col_or]).strip() if pd.notna(r[col_or]) else ""
@@ -187,6 +188,8 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
             mobile = str(r[col_mobile]).strip()
             if mobile.lower() in ("nan", "none"):
                 mobile = ""
+            # Multi-donor rows may list one contact number per line - keep them all
+            mobile = ", ".join(l.strip() for l in mobile.splitlines() if l.strip()) if mobile else ""
 
         rows.append({
             "or_number":   or_no,
