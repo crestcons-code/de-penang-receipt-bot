@@ -130,6 +130,8 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
     if len(cols) < 9:
         raise ValueError(f"Dana list has only {len(cols)} columns — expected at least 9. Please check the file format.")
     col_date     = cols[0]    # Transaction Date
+    col_desc1    = cols[1]    # Transaction Description 1
+    col_desc2    = cols[2]    # Transaction Description 2
     col_bene     = cols[3]    # Beneficiary / Biller Name
     col_amount   = cols[5]    # Transaction Amount: Cash-in (RM)
     col_or       = cols[6]    # Receipts No
@@ -137,6 +139,11 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
     col_desc     = cols[8]    # Dana description
     col_donor    = cols[9]  if len(cols) > 9  else None
     col_mobile   = cols[11] if len(cols) > 11 else None
+
+    # Forest monastery donor-group code, e.g. "RC G7" (found in the bank transaction
+    # descriptions or dana description). When present, the Autocount description
+    # becomes "RC G7 - <Donor Name>" so the donor group is identifiable.
+    _rc_group_re = re.compile(r"RC\s*-?\s*G\s*-?\s*(\d+)", re.IGNORECASE)
 
     rows = []
     blank_gl_count = [0]  # mutable counter
@@ -182,6 +189,15 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
 
         if not description:
             description = GL_SHORT_DESC.get(gl_code, "General Donation")
+
+        # Forest monastery: prefix the donor-group code (RC G7 etc.) to the donor name
+        _rc_src = " ".join(
+            str(r[c]) for c in (col_desc1, col_desc2, col_desc)
+            if pd.notna(r[c])
+        )
+        _rc_m = _rc_group_re.search(_rc_src)
+        if _rc_m:
+            description = f"RC G{_rc_m.group(1)} - {donor}"
 
         mobile = ""
         if col_mobile and pd.notna(r[col_mobile]):
