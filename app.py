@@ -1,7 +1,7 @@
 # app.py -- Autocount Donation Receipt Web App
 # Run with: python -m streamlit run app.py
 
-import sys, io, re, time
+import sys, io, re, time, json
 import streamlit as st
 import pandas as pd
 import streamlit_authenticator as stauth
@@ -160,10 +160,30 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
 
         # Donor name: col J (Donor name on Receipt) first, fall back to col D (Beneficiary)
         # Multi-donor cells have one donor per line - join them all onto the one receipt
-        donor = str(r[col_donor]).strip() if (col_donor and pd.notna(r[col_donor])) else ""
+        raw_donor_cell = str(r[col_donor]).strip() if (col_donor and pd.notna(r[col_donor])) else ""
+        donor = raw_donor_cell
         if not donor or donor.lower() in ("nan", "none", "-", "n/a"):
             donor = str(r[col_bene]).strip().rstrip("*").strip()
         donor = ", ".join(l.strip() for l in donor.splitlines() if l.strip()) if donor else ""
+
+        # Multi-donor rows with per-donor amounts (e.g. "1) Lim Bee Chin RM30") become
+        # separate detail lines on the one receipt - only when the amounts add up
+        detail_lines = []
+        if raw_donor_cell and "\n" in raw_donor_cell:
+            _line_re = re.compile(r"^\s*(?:\d+[\).\:]\s*)?(.+?)\s*[-–]?\s*RM\s*([\d,]+(?:\.\d{1,2})?)\s*$", re.IGNORECASE)
+            _parsed = []
+            for _ln in raw_donor_cell.splitlines():
+                _ln = _ln.strip()
+                if not _ln:
+                    continue
+                _m = _line_re.match(_ln)
+                if not _m:
+                    _parsed = []
+                    break
+                _parsed.append({"description": _m.group(1).strip(),
+                                "amount": float(_m.group(2).replace(",", ""))})
+            if len(_parsed) > 1 and abs(sum(p["amount"] for p in _parsed) - amount) < 0.01:
+                detail_lines = _parsed
 
         # OR number (may be pre-filled or blank)
         or_no = str(r[col_or]).strip() if pd.notna(r[col_or]) else ""
@@ -208,6 +228,7 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
             mobile = ", ".join(l.strip() for l in mobile.splitlines() if l.strip()) if mobile else ""
 
         rows.append({
+            "detail_json": json.dumps(detail_lines) if detail_lines else "",
             "or_number":   or_no,
             "date":        txn_date,
             "donor_name":  donor,
@@ -246,6 +267,15 @@ def _post_rows(post_items: list, existing_or_numbers: set = None) -> list:
             dept = ""
         whatsapp = str(item.get("WhatsApp Mobile", "")).strip()
 
+        # Multi-donor receipts: one detail line per donor with their own amount
+        detail_lines = []
+        _dj = str(item.get("_details", "") or "").strip()
+        if _dj and _dj.lower() not in ("nan", "none"):
+            try:
+                detail_lines = json.loads(_dj)
+            except Exception:
+                detail_lines = []
+
         status_box.info(f"Posting {i+1}/{len(post_items)}: {donor} - RM{amount:.2f} ({or_no})")
 
         # If a specific OR number was intended and it already exists in Autocount,
@@ -274,6 +304,7 @@ def _post_rows(post_items: list, existing_or_numbers: set = None) -> list:
                     department=dept,
                     doc_no=or_no,
                     strict_doc_no=True,
+                    detail_lines=detail_lines,
                 )
                 doc_no = result.get("docNo") or result.get("DocNo") or or_no or "posted"
                 results.append({"Donor": donor, "Amount": amount, "GL": gl_code,
@@ -348,6 +379,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
             "Department":       st.column_config.TextColumn("Department"),
             "Amount (RM)":      st.column_config.NumberColumn("Amount (RM)", format="RM %.2f", disabled=True),
             "WhatsApp Mobile":  st.column_config.TextColumn("WhatsApp Mobile", help="Edit to add or correct the donor's WhatsApp number"),
+            "_details":         None,   # hidden: per-donor detail lines (JSON) for multi-donor receipts
         },
         use_container_width=True,
         hide_index=True,
@@ -384,6 +416,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
                 "Department":      str(row.get("Department", "")).strip(),
                 "Amount (RM)":     float(row["Amount (RM)"]),
                 "WhatsApp Mobile": str(row.get("WhatsApp Mobile", "")).strip(),
+                "_details":        str(row.get("_details", "") or ""),
             })
         st.session_state["dana_post_results"] = _post_rows(post_items, existing_or_numbers)
 
@@ -681,6 +714,7 @@ with tab_dana:
                 "Department":     txn["department"],
                 "Amount (RM)":    amount,
                 "WhatsApp Mobile": txn.get("mobile", ""),
+                "_details":       txn.get("detail_json", ""),
             })
 
         if skipped_rows:

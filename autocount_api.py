@@ -168,6 +168,7 @@ class AutocountClient:
         department: str = "",
         doc_no: str = "",
         strict_doc_no: bool = False,
+        detail_lines: list = None,
     ) -> dict:
         """
         Post an Official Receipt (OR) via Cash Book Entry:
@@ -176,6 +177,10 @@ class AutocountClient:
 
         If strict_doc_no=True and doc_no is provided, only that exact number is attempted -
         no silent fallback to the next available number. Raises on duplicate/failure instead.
+
+        detail_lines: optional list of {"description", "amount"} dicts. When given
+        (multi-donor receipts), each becomes its own detail line on the same GL code;
+        their amounts must sum to `amount`. Otherwise a single detail line is used.
         """
         # Use provided doc_no, or auto-detect next available
         last_err = None
@@ -194,14 +199,26 @@ class AutocountClient:
                     "dealWith": donor_name,
                     "description": description or donor_name,
                 },
-                "details": [
-                    {
-                        "accNo": donation_gl_code,
-                        "description": description or donor_name,
-                        "amount": amount,
-                        **({"deptNo": department} if department else {}),
-                    }
-                ],
+                "details": (
+                    [
+                        {
+                            "accNo": donation_gl_code,
+                            "description": d["description"],
+                            "amount": d["amount"],
+                            **({"deptNo": department} if department else {}),
+                        }
+                        for d in detail_lines
+                    ]
+                    if detail_lines else
+                    [
+                        {
+                            "accNo": donation_gl_code,
+                            "description": description or donor_name,
+                            "amount": amount,
+                            **({"deptNo": department} if department else {}),
+                        }
+                    ]
+                ),
                 "paymentDetails": [
                     {
                         "paymentMethod": payment_method,
