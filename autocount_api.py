@@ -48,40 +48,66 @@ class AutocountClient:
     def get_posted_receipts(self, from_date: str, to_date: str) -> list[dict]:
         """
         Return OR records whose docDate falls between from_date and to_date (YYYY-MM-DD).
-        Scans from the last page backwards; stops after 5 consecutive pages with no matches.
+        The listing API ignores date filters, so this binary-searches the (roughly
+        chronological) pages to locate the range - works for any period, however old.
         Returns list of dicts: {docNo, date, dealWith, amount}
         """
         page_size = 100
         r0 = self._get("/payment/listing", params={"page": 1, "pageSize": page_size, "docType": "OR"})
-        total = r0.get("totalCount", r0.get("total", 0))
-        actual = len(r0.get("data", [])) or page_size
+        total  = r0.get("totalCount", r0.get("total", 0))
+        data0  = r0.get("data", [])
+        actual = len(data0) or page_size
         last_page = max(1, -(-total // actual))
 
         from_dt = from_date[:10]
         to_dt   = to_date[:10]
-        results = []
-        no_match_streak = 0
 
-        for pg in range(last_page, max(0, last_page - 30), -1):
-            r = self._get("/payment/listing", params={"page": pg, "pageSize": page_size, "docType": "OR"})
-            found_any = False
-            for d in r.get("data", []):
-                m = d["master"]
-                doc_date = m.get("docDate", "")[:10]
-                if from_dt <= doc_date <= to_dt:
-                    results.append({
-                        "docNo":    m.get("docNo", ""),
-                        "date":     doc_date,
-                        "dealWith": (m.get("dealWith") or "").strip().upper(),
-                        "amount":   float(m.get("totalPayment") or 0),
-                    })
-                    found_any = True
-            if found_any:
-                no_match_streak = 0
+        _page_cache = {1: data0}
+        def _get_page(pg):
+            if pg not in _page_cache:
+                r = self._get("/payment/listing", params={"page": pg, "pageSize": page_size, "docType": "OR"})
+                _page_cache[pg] = r.get("data", [])
+            return _page_cache[pg]
+
+        def _dates(pg):
+            return [d["master"].get("docDate", "")[:10] for d in _get_page(pg)]
+
+        # First page that could contain the range (max date on page >= from_dt)
+        lo, hi, first_pg = 1, last_page, last_page + 1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            ds = _dates(mid)
+            if ds and max(ds) >= from_dt:
+                first_pg = mid
+                hi = mid - 1
             else:
-                no_match_streak += 1
-                if no_match_streak >= 5:
-                    break
+                lo = mid + 1
+
+        # Last page that could contain the range (min date on page <= to_dt)
+        lo, hi, last_pg = 1, last_page, 0
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            ds = _dates(mid)
+            if ds and min(ds) <= to_dt:
+                last_pg = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+
+        results = []
+        if last_pg >= first_pg:
+            # +-2 page buffer in case a few records are slightly out of date order
+            for pg in range(max(1, first_pg - 2), min(last_page, last_pg + 2) + 1):
+                for d in _get_page(pg):
+                    m = d["master"]
+                    doc_date = m.get("docDate", "")[:10]
+                    if from_dt <= doc_date <= to_dt:
+                        results.append({
+                            "docNo":    m.get("docNo", ""),
+                            "date":     doc_date,
+                            "dealWith": (m.get("dealWith") or "").strip().upper(),
+                            "amount":   float(m.get("totalPayment") or 0),
+                        })
 
         return results
 
