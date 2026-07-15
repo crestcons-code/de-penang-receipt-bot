@@ -980,6 +980,67 @@ with tab_recon:
                             if id(p) not in _claimed and p["docNo"] not in _consumed_docnos]
 
             _render_recon_results(result_rows, "Dana List", ac_unmatched=ac_unmatched)
+
+            # â"€â"€ Post MISSING rows directly from the reconciliation
+            missing_rows = [r for r in result_rows if r["Status"] == "MISSING"]
+            missing_no_gl = [r for r in missing_rows if not str(r.get("GL Code", "")).strip()]
+            missing_rows  = [r for r in missing_rows if str(r.get("GL Code", "")).strip()]
+            if missing_rows or missing_no_gl:
+                st.divider()
+                st.subheader("Post Missing OR(s) to Autocount")
+                if missing_no_gl:
+                    st.warning(f"{len(missing_no_gl)} missing row(s) have no GL code (column H) and cannot be "
+                               "posted from here - fill in the GL code in the dana list first.")
+            if missing_rows:
+                st.caption("These rows are in the dana list but not in Autocount. Review, untick any you don't want, then post.")
+                df_miss = pd.DataFrame(missing_rows)[
+                    ["OR Number", "Date", "Donor Name", "GL Code", "Description", "Amount (RM)", "WhatsApp Mobile"]
+                ]
+                df_miss.insert(0, "Post", True)
+                edited_miss = st.data_editor(
+                    df_miss,
+                    column_config={
+                        "Post":        st.column_config.CheckboxColumn("Post?", default=True),
+                        "Amount (RM)": st.column_config.NumberColumn("Amount (RM)", format="RM %.2f", disabled=True),
+                        "Date":        st.column_config.TextColumn("Date", disabled=True),
+                    },
+                    use_container_width=True, hide_index=True, num_rows="fixed",
+                    key="recon_missing_editor",
+                )
+                to_post_miss = edited_miss[edited_miss["Post"] == True]
+                if len(to_post_miss) == 0:
+                    st.info("Tick at least one row to post.")
+                elif st.button(f"Post {len(to_post_miss)} Missing Receipt(s) to Autocount",
+                               type="primary", use_container_width=True, key="recon_post_missing_btn"):
+                    post_items = []
+                    for _, r in to_post_miss.iterrows():
+                        gl = str(r["GL Code"]).strip()
+                        post_items.append({
+                            "OR Number":       str(r.get("OR Number", "")).strip(),
+                            "Date":            str(r["Date"]),
+                            "Donor Name":      str(r["Donor Name"]),
+                            "GL Account":      gl,
+                            "Description":     str(r["Description"]),
+                            "Department":      get_department(gl),
+                            "Amount (RM)":     float(r["Amount (RM)"]),
+                            "WhatsApp Mobile": str(r.get("WhatsApp Mobile", "")).strip(),
+                        })
+                    recon_results = _post_rows(post_items, {p["docNo"] for p in posted_r})
+                    df_rr = pd.DataFrame(recon_results)
+                    ok_r  = (df_rr["Status"] == "success").sum()
+                    err_r = (df_rr["Status"] == "error").sum()
+                    if err_r:
+                        st.error(f"Posted {ok_r} receipt(s), {err_r} failed - see below.")
+                    else:
+                        st.success(f"All {ok_r} receipt(s) posted successfully.")
+                    st.dataframe(
+                        df_rr.style.apply(
+                            lambda row: ["background-color: #d4edda" if row["Status"] == "success"
+                                         else "background-color: #f8d7da"] * len(row), axis=1),
+                        use_container_width=True, hide_index=True,
+                    )
+                    _fetch_posted_cached.clear()
+                    st.info("Autocount cache refreshed - re-upload or rerun the reconciliation to see the updated results.")
         else:
             st.info("Upload the monthly dana list Excel file to run the reconciliation check.")
 
