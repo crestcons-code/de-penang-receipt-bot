@@ -987,9 +987,40 @@ with tab_recon:
                 st.divider()
                 st.subheader("Post Missing OR(s) to Autocount")
                 _no_gl_count = sum(1 for r in missing_rows if not str(r.get("GL Code", "")).strip())
+                _no_or_count = sum(1 for r in missing_rows if not str(r.get("OR Number", "")).strip())
+
+                # Propose OR numbers for blank rows: fill gaps in the month's sequence
+                # first, then continue after the highest used number
+                import re as _re6
+                _used_by_prefix = {}
+                for p in posted_r:
+                    m = _re6.match(r"^OR-(\d{4})(\d{3})(?:-\d+)?$", p["docNo"])
+                    if m:
+                        _used_by_prefix.setdefault(m.group(1), set()).add(int(m.group(2)))
+
+                def _propose_or(date_str):
+                    yymm = date_str[2:4] + date_str[5:7]
+                    used = _used_by_prefix.setdefault(yymm, set())
+                    n = 1
+                    while n in used:
+                        n += 1
+                    used.add(n)   # reserve so multiple proposals don't collide
+                    return f"OR-{yymm}{n:03d}"
+
+                for r in missing_rows:
+                    # Propose GL code from description keywords when column H was blank
+                    if not str(r.get("GL Code", "")).strip():
+                        _gl_prop, _, _ = map_to_gl(f"{r.get('Description','')} {r.get('Donor Name','')}")
+                        r["GL Code"] = _gl_prop
+                    if not str(r.get("OR Number", "")).strip():
+                        r["OR Number"] = _propose_or(str(r["Date"]))
+
                 if _no_gl_count:
-                    st.warning(f"{_no_gl_count} row(s) have no GL code (column H in the dana list) - "
-                               "select a GL Code in the table below before posting them.")
+                    st.warning(f"{_no_gl_count} row(s) had no GL code (column H) - a GL Code has been "
+                               "proposed from the description keywords. Please verify before posting.")
+                if _no_or_count:
+                    st.info(f"{_no_or_count} row(s) had no OR number - the next available number "
+                            "(gap-filling) has been proposed. Edit if needed.")
                 st.caption("These rows are in the dana list but not in Autocount. Review, untick any you don't want, then post.")
                 df_miss = pd.DataFrame(missing_rows)[
                     ["OR Number", "Date", "Donor Name", "GL Code", "Description", "Amount (RM)", "WhatsApp Mobile"]
