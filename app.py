@@ -983,24 +983,27 @@ with tab_recon:
 
             # â"€â"€ Post MISSING rows directly from the reconciliation
             missing_rows = [r for r in result_rows if r["Status"] == "MISSING"]
-            missing_no_gl = [r for r in missing_rows if not str(r.get("GL Code", "")).strip()]
-            missing_rows  = [r for r in missing_rows if str(r.get("GL Code", "")).strip()]
-            if missing_rows or missing_no_gl:
+            if missing_rows:
                 st.divider()
                 st.subheader("Post Missing OR(s) to Autocount")
-                if missing_no_gl:
-                    st.warning(f"{len(missing_no_gl)} missing row(s) have no GL code (column H) and cannot be "
-                               "posted from here - fill in the GL code in the dana list first.")
-            if missing_rows:
+                _no_gl_count = sum(1 for r in missing_rows if not str(r.get("GL Code", "")).strip())
+                if _no_gl_count:
+                    st.warning(f"{_no_gl_count} row(s) have no GL code (column H in the dana list) - "
+                               "select a GL Code in the table below before posting them.")
                 st.caption("These rows are in the dana list but not in Autocount. Review, untick any you don't want, then post.")
                 df_miss = pd.DataFrame(missing_rows)[
                     ["OR Number", "Date", "Donor Name", "GL Code", "Description", "Amount (RM)", "WhatsApp Mobile"]
                 ]
                 df_miss.insert(0, "Post", True)
+                # GL dropdown: known codes plus any codes already in the data; "" for blanks
+                _gl_code_options = sorted({c for c, _, _ in DONATION_MAP} |
+                                          {str(g).strip() for g in df_miss["GL Code"] if str(g).strip()})
                 edited_miss = st.data_editor(
                     df_miss,
                     column_config={
                         "Post":        st.column_config.CheckboxColumn("Post?", default=True),
+                        "GL Code":     st.column_config.SelectboxColumn("GL Code", options=[""] + _gl_code_options,
+                                                                        help="Rows with a blank GL Code will not be posted"),
                         "Amount (RM)": st.column_config.NumberColumn("Amount (RM)", format="RM %.2f", disabled=True),
                         "Date":        st.column_config.TextColumn("Date", disabled=True),
                     },
@@ -1008,8 +1011,12 @@ with tab_recon:
                     key="recon_missing_editor",
                 )
                 to_post_miss = edited_miss[edited_miss["Post"] == True]
+                _blank_sel = (to_post_miss["GL Code"].astype(str).str.strip() == "").sum()
+                to_post_miss = to_post_miss[to_post_miss["GL Code"].astype(str).str.strip() != ""]
+                if _blank_sel:
+                    st.warning(f"{_blank_sel} ticked row(s) still have no GL Code selected - they will be skipped.")
                 if len(to_post_miss) == 0:
-                    st.info("Tick at least one row to post.")
+                    st.info("Tick at least one row (with a GL Code) to post.")
                 elif st.button(f"Post {len(to_post_miss)} Missing Receipt(s) to Autocount",
                                type="primary", use_container_width=True, key="recon_post_missing_btn"):
                     post_items = []
