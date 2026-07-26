@@ -11,3 +11,7 @@ usernames:
     name: Lee Ean Cheng
     password: $2b$12$Queins0R29igmF9fVuXVTeYXd9UFk4I7Crz.6hUSpJm96Vo1dICJS
     role: user
+  tiemleong:
+    name: Yoon Tiem Leong
+    password: $2b$12$Cgu7gVksJLirbmnGifecPuadOHaUOcfDFUJixrMEPuPNTWZqR9pt2
+    role: user
