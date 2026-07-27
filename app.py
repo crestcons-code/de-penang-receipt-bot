@@ -1184,27 +1184,76 @@ with tab_recon:
 # TAB - Print Batch OR (lookup any date range)
 # ==============================================
 with tab_print:
-    st.subheader("Print Batch OR — Lookup by Date Range")
-    st.caption("Fetch OR numbers posted in Autocount for any period, to print in batch. "
+    st.subheader("Print Batch OR — Lookup")
+    st.caption("Fetch OR records posted in Autocount, to print in batch or download a donor list. "
                "Works for past postings too, not just the current session.")
 
-    import datetime as _dt
-    col_a, col_b = st.columns(2)
-    with col_a:
-        lookup_from = st.date_input("From Date", value=_dt.date.today().replace(day=1), key="lookup_from")
-    with col_b:
-        lookup_to = st.date_input("To Date", value=_dt.date.today(), key="lookup_to")
+    lookup_mode = st.radio("Search by:", ["Date Range", "OR Number(s)"], horizontal=True, key="lookup_mode")
+    import datetime as _dt, re as _re7
 
-    if st.button("🔍 Fetch OR Numbers", type="primary"):
-        if lookup_from > lookup_to:
-            st.error("From Date must be before To Date.")
-        else:
-            with st.spinner("Fetching OR records from Autocount..."):
+    if lookup_mode == "Date Range":
+        col_a, col_b = st.columns(2)
+        with col_a:
+            lookup_from = st.date_input("From Date", value=_dt.date.today().replace(day=1), key="lookup_from")
+        with col_b:
+            lookup_to = st.date_input("To Date", value=_dt.date.today(), key="lookup_to")
+
+        if st.button("🔍 Fetch OR Numbers", type="primary"):
+            if lookup_from > lookup_to:
+                st.error("From Date must be before To Date.")
+            else:
+                with st.spinner("Fetching OR records from Autocount..."):
+                    lookup_client = AutocountClient()
+                    lookup_results = lookup_client.get_posted_receipts(
+                        lookup_from.strftime("%Y-%m-%d"), lookup_to.strftime("%Y-%m-%d")
+                    )
+                st.session_state["print_lookup_results"] = lookup_results
+
+    else:
+        or_search_text = st.text_area(
+            "Enter OR Number(s) — one per line or comma-separated",
+            placeholder="OR-2607180\nOR-2607181, OR-2607182",
+            key="or_search_text",
+        )
+        if st.button("🔍 Search OR Number(s)", type="primary"):
+            wanted = {w.strip().upper() for w in _re7.split(r"[,\n]", or_search_text) if w.strip()}
+            if not wanted:
+                st.error("Enter at least one OR number.")
+            else:
+                # Group by YYMM prefix so each distinct month is fetched once
+                months = {}
+                bad = []
+                for doc in wanted:
+                    m = _re7.match(r"^OR-(\d{2})(\d{2})", doc)
+                    if m:
+                        months.setdefault(m.group(1) + m.group(2), []).append(doc)
+                    else:
+                        bad.append(doc)
+                if bad:
+                    st.warning(f"Could not parse month from: {', '.join(bad)} (expected format OR-YYMMNNN)")
+
                 lookup_client = AutocountClient()
-                lookup_results = lookup_client.get_posted_receipts(
-                    lookup_from.strftime("%Y-%m-%d"), lookup_to.strftime("%Y-%m-%d")
-                )
-            st.session_state["print_lookup_results"] = lookup_results
+                lookup_results = []
+                with st.spinner(f"Fetching OR records from Autocount ({len(months)} month(s))..."):
+                    for yymm in months:
+                        yy, mm = yymm[:2], yymm[2:]
+                        year = 2000 + int(yy)
+                        from_d = f"{year:04d}-{mm}-01"
+                        to_d   = (pd.Timestamp(from_d) + pd.offsets.MonthEnd(1)).strftime("%Y-%m-%d")
+                        lookup_results.extend(lookup_client.get_posted_receipts(from_d, to_d))
+
+                # Keep exact matches, or suffixed ORs whose base matches (OR-2607180-1 for OR-2607180)
+                def _base(doc):
+                    return _re7.sub(r"-\d+$", "", doc)
+                lookup_results = [p for p in lookup_results
+                                  if p["docNo"] in wanted or _base(p["docNo"]) in wanted]
+
+                found_docs = {p["docNo"] for p in lookup_results} | {_base(p["docNo"]) for p in lookup_results}
+                not_found = wanted - found_docs
+                if not_found:
+                    st.warning(f"Not found in Autocount: {', '.join(sorted(not_found))}")
+
+                st.session_state["print_lookup_results"] = lookup_results
 
     # Optional: upload the dana list to add WhatsApp numbers (not stored in Autocount)
     print_dana_file = st.file_uploader(
