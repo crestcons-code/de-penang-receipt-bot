@@ -668,7 +668,10 @@ with tab_dana:
                 dw = p.get("dealWith", "")
                 if dw == donor_key_:
                     return p
-                if len(dw) == 100 and donor_key_.startswith(dw):
+                # Autocount truncates DealWith around 100 chars for long multi-donor
+                # entries (sometimes trimming a trailing char too, so allow 90-100)
+                # rather than requiring an exact 100-char length
+                if 90 <= len(dw) <= 100 and donor_key_.startswith(dw):
                     return p
             return None
 
@@ -959,7 +962,7 @@ with tab_recon:
                     if p["docNo"] in _claimed_donor_docs:
                         continue
                     dw = p.get("dealWith", "")
-                    if dw == donor_key_ or (len(dw) == 100 and donor_key_.startswith(dw)):
+                    if dw == donor_key_ or (90 <= len(dw) <= 100 and donor_key_.startswith(dw)):
                         return p
                 return None
             _claimed_donor_docs = set()
