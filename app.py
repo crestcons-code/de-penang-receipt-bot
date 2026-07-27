@@ -1313,18 +1313,21 @@ with tab_print:
                     _mobile_by_or = {r["or_number"]: r.get("mobile", "")
                                      for _, r in df_pd.iterrows() if r["or_number"]}
 
-                    # Fallback: match by date+amount+donor (all three) for dana lists
-                    # where the OR column was left blank. Donor name is REQUIRED here -
-                    # matching by date+amount alone previously cross-assigned WhatsApp
-                    # numbers between different donors who happened to give the same
-                    # amount on the same day.
-                    _mobile_by_dad = {}
+                    # Fallback: match by date+amount+donor for dana lists where the OR
+                    # column was left blank. Donor name is REQUIRED here - matching by
+                    # date+amount alone previously cross-assigned WhatsApp numbers
+                    # between different donors who happened to give the same amount on
+                    # the same day.
+                    # Autocount's DealWith field is truncated to 100 chars when posted,
+                    # so for long multi-donor entries the live Autocount name is only a
+                    # PREFIX of the dana list's full donor text - match on that too.
+                    _dad_candidates = {}   # (date, amount) -> [(donor_name_upper, mobile), ...]
                     for _, r in df_pd.iterrows():
                         mob = r.get("mobile", "")
                         if mob:
                             amt = round(float(r["amount"]), 2)
-                            donor_key = str(r["donor_name"]).strip().upper()
-                            _mobile_by_dad.setdefault((r["date"], amt, donor_key), []).append(mob)
+                            donor_full = str(r["donor_name"]).strip().upper()
+                            _dad_candidates.setdefault((r["date"], amt), []).append((donor_full, mob))
 
                     def _wa_lookup(row):
                         doc = row["OR Number"]
@@ -1334,9 +1337,16 @@ with tab_print:
                         if base in _mobile_by_or:
                             return _mobile_by_or[base]
                         amt = round(float(row["Amount (RM)"]), 2)
-                        donor_key = str(row["Donor Name"]).strip().upper()
-                        pool = _mobile_by_dad.get((row["Date"], amt, donor_key), [])
-                        return pool.pop(0) if pool else ""
+                        ac_donor = str(row["Donor Name"]).strip().upper()
+                        candidates = _dad_candidates.get((row["Date"], amt), [])
+                        # Prefer an exact donor match; only fall back to prefix match
+                        # (Autocount's name may be a 100-char-truncated prefix of the
+                        # dana list's full donor text) if no exact match exists
+                        for donor_full, mob in candidates:
+                            if donor_full == ac_donor:
+                                return mob
+                        prefix_hits = [mob for donor_full, mob in candidates if donor_full.startswith(ac_donor)]
+                        return prefix_hits[0] if len(prefix_hits) == 1 else ""
 
                     df_lookup["WhatsApp Mobile"] = df_lookup.apply(_wa_lookup, axis=1)
                     _wa_count = (df_lookup["WhatsApp Mobile"] != "").sum()
