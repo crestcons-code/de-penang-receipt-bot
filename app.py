@@ -652,6 +652,26 @@ with tab_dana:
             base = _re.sub(r"-\d+$", "", doc)
             posted_or_numbers.add(base)
 
+        # Duplicate lookup by (date, amount) -> list of posted records, used to catch
+        # donations already posted under a DIFFERENT OR number than the one pre-filled
+        # in the dana list (e.g. sequence was auto-assigned on first post, then the
+        # dana list's OR column got filled in later with a non-matching number).
+        # Autocount truncates DealWith to 100 chars for long multi-donor entries, so a
+        # prefix match is used when the stored name is exactly at that limit.
+        import re as _re8
+        _by_date_amt = {}
+        for p in posted:
+            _by_date_amt.setdefault((p["date"], round(float(p["amount"]), 2)), []).append(p)
+
+        def _find_duplicate(date_, amount_, donor_key_):
+            for p in _by_date_amt.get((date_, amount_), []):
+                dw = p.get("dealWith", "")
+                if dw == donor_key_:
+                    return p
+                if len(dw) == 100 and donor_key_.startswith(dw):
+                    return p
+            return None
+
         rows = []
         skipped_rows = []   # display info
         skipped_txns = []   # full txn data for potential re-include
@@ -660,23 +680,29 @@ with tab_dana:
         for _, txn in df_dana.iterrows():
             txn_date = txn["date"]
             amount   = round(float(txn["amount"]), 2)
+            donor_key = str(txn["donor_name"]).strip().upper()
 
-            # Skip if pre-filled OR number already exists in Autocount
+            dup = _find_duplicate(txn_date, amount, donor_key)
+            if dup is not None:
+                skipped_count += 1
+                if txn["or_number"] and txn["or_number"] != dup["docNo"] and \
+                   _re8.sub(r"-\d+$", "", dup["docNo"]) != txn["or_number"]:
+                    reason = f"Already posted as {dup['docNo']} (file has different OR number {txn['or_number']})"
+                else:
+                    reason = f"Already posted as {dup['docNo']}"
+                skipped_rows.append({"Re-post?": False, "OR Number": txn["or_number"] or "(none)", "Date": txn_date,
+                                     "Donor": txn["donor_name"], "Amount (RM)": amount,
+                                     "Reason": reason})
+                skipped_txns.append(txn)
+                continue
+
+            # Pre-filled OR number exists in Autocount but date/amount/donor didn't
+            # match above (e.g. donor name was edited) - still treat as posted
             if txn["or_number"] and txn["or_number"] in posted_or_numbers:
                 skipped_count += 1
                 skipped_rows.append({"Re-post?": False, "OR Number": txn["or_number"], "Date": txn_date,
                                      "Donor": txn["donor_name"], "Amount (RM)": amount,
                                      "Reason": "OR number already in Autocount"})
-                skipped_txns.append(txn)
-                continue
-
-            # Skip if no OR number and date+amount+donor already posted
-            donor_key = str(txn["donor_name"]).strip().upper()
-            if not txn["or_number"] and (txn_date, amount, donor_key) in posted_keys:
-                skipped_count += 1
-                skipped_rows.append({"Re-post?": False, "OR Number": "(none)", "Date": txn_date,
-                                     "Donor": txn["donor_name"], "Amount (RM)": amount,
-                                     "Reason": "Same date, amount & donor already in Autocount"})
                 skipped_txns.append(txn)
                 continue
 
@@ -921,10 +947,45 @@ with tab_recon:
             _remaining_da = {k: list(v) for k, v in ac_by_date_amount.items()}
             _consumed_docnos = set()
 
+            # date+amount lookup with donor names, for catching donations posted under
+            # a DIFFERENT OR number than the one pre-filled in the dana list (Autocount
+            # truncates DealWith to 100 chars for long multi-donor entries)
+            _by_date_amt = {}
+            for p in posted_r:
+                _by_date_amt.setdefault((p["date"], round(float(p["amount"]), 2)), []).append(p)
+
+            def _find_by_donor(date_, amount_, donor_key_):
+                for p in _by_date_amt.get((date_, amount_), []):
+                    if p["docNo"] in _claimed_donor_docs:
+                        continue
+                    dw = p.get("dealWith", "")
+                    if dw == donor_key_ or (len(dw) == 100 and donor_key_.startswith(dw)):
+                        return p
+                return None
+            _claimed_donor_docs = set()
+
             result_rows = []
             for _, txn in df_recon.iterrows():
                 or_no  = txn["or_number"]
                 amount = round(float(txn["amount"]), 2)
+                donor_key = str(txn["donor_name"]).strip().upper()
+
+                if or_no and or_no not in _pool_by_or:
+                    # Pre-filled OR doesn't exist - check if it was posted under a
+                    # different OR number before treating this row as truly missing
+                    _dup = _find_by_donor(txn["date"], amount, donor_key)
+                    if _dup is not None:
+                        _claimed_donor_docs.add(_dup["docNo"])
+                        status  = "MISMATCH"
+                        matched = f"{_dup['docNo']} (posted under a different OR number than {or_no})"
+                        result_rows.append({
+                            "Status": status, "OR Number": or_no, "Matched AC Doc": matched,
+                            "Date": txn["date"], "Donor Name": txn["donor_name"], "GL Code": txn["gl_code"],
+                            "Description": txn["description"], "Amount (RM)": amount,
+                            "WhatsApp Mobile": txn.get("mobile", ""),
+                        })
+                        continue
+
                 if or_no and or_no in _pool_by_or:
                     ac_recs, amt_ok = _claim_record(or_no, amount)
                     if not ac_recs:
