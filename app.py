@@ -1313,17 +1313,18 @@ with tab_print:
                     _mobile_by_or = {r["or_number"]: r.get("mobile", "")
                                      for _, r in df_pd.iterrows() if r["or_number"]}
 
-                    # Fallback: match by date+amount+donor, then date+amount, for
-                    # dana lists where the OR column was left blank
+                    # Fallback: match by date+amount+donor (all three) for dana lists
+                    # where the OR column was left blank. Donor name is REQUIRED here -
+                    # matching by date+amount alone previously cross-assigned WhatsApp
+                    # numbers between different donors who happened to give the same
+                    # amount on the same day.
                     _mobile_by_dad = {}
-                    _mobile_by_da  = {}
                     for _, r in df_pd.iterrows():
                         mob = r.get("mobile", "")
                         if mob:
                             amt = round(float(r["amount"]), 2)
                             donor_key = str(r["donor_name"]).strip().upper()
                             _mobile_by_dad.setdefault((r["date"], amt, donor_key), []).append(mob)
-                            _mobile_by_da.setdefault((r["date"], amt), []).append(mob)
 
                     def _wa_lookup(row):
                         doc = row["OR Number"]
@@ -1335,9 +1336,6 @@ with tab_print:
                         amt = round(float(row["Amount (RM)"]), 2)
                         donor_key = str(row["Donor Name"]).strip().upper()
                         pool = _mobile_by_dad.get((row["Date"], amt, donor_key), [])
-                        if pool:
-                            return pool.pop(0)
-                        pool = _mobile_by_da.get((row["Date"], amt), [])
                         return pool.pop(0) if pool else ""
 
                     df_lookup["WhatsApp Mobile"] = df_lookup.apply(_wa_lookup, axis=1)
