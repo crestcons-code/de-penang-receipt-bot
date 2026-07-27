@@ -1211,14 +1211,44 @@ with tab_print:
 
     else:
         or_search_text = st.text_area(
-            "Enter OR Number(s) — one per line or comma-separated",
-            placeholder="OR-2607180\nOR-2607181, OR-2607182",
+            "Enter OR Number(s) — one per line, comma-separated, or a range with 'to'",
+            placeholder="OR-2607180\nOR-2607181, OR-2607182\nOR-2607190 to OR-2607200",
             key="or_search_text",
         )
         if st.button("🔍 Search OR Number(s)", type="primary"):
-            wanted = {w.strip().upper() for w in _re7.split(r"[,\n]", or_search_text) if w.strip()}
+            wanted = set()
+            range_errors = []
+            for line in _re7.split(r"[,\n]", or_search_text):
+                line = line.strip()
+                if not line:
+                    continue
+                if " to " in line.lower():
+                    parts = _re7.split(r"\s+to\s+", line, flags=_re7.IGNORECASE)
+                    if len(parts) != 2:
+                        range_errors.append(line)
+                        continue
+                    m1 = _re7.match(r"^OR-(\d{4})(\d{3})$", parts[0].strip().upper())
+                    m2 = _re7.match(r"^OR-(\d{4})(\d{3})$", parts[1].strip().upper())
+                    if not m1 or not m2 or m1.group(1) != m2.group(1):
+                        range_errors.append(line)
+                        continue
+                    yymm, n1, n2 = m1.group(1), int(m1.group(2)), int(m2.group(2))
+                    if n2 < n1:
+                        n1, n2 = n2, n1
+                    if n2 - n1 > 2000:
+                        range_errors.append(f"{line} (range too large, max 2000)")
+                        continue
+                    for n in range(n1, n2 + 1):
+                        wanted.add(f"OR-{yymm}{n:03d}")
+                else:
+                    wanted.add(line.upper())
+
+            if range_errors:
+                st.warning(f"Could not parse range(s): {', '.join(range_errors)} "
+                           "(expected 'OR-2607190 to OR-2607200', same month)")
+
             if not wanted:
-                st.error("Enter at least one OR number.")
+                st.error("Enter at least one OR number or range.")
             else:
                 # Group by YYMM prefix so each distinct month is fetched once
                 months = {}
