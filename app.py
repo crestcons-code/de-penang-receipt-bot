@@ -165,8 +165,10 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
         # separate detail lines on the one receipt - only when the amounts add up
         detail_lines = []
         if raw_donor_cell and "\n" in raw_donor_cell:
-            # Allow trailing notes after the amount, e.g. "3. Amy Choy RM50 -P"
-            _line_re = re.compile(r"^\s*(?:\d+[\).\:]\s*)?(.+?)\s*[-–]?\s*RM\s*([\d,]+(?:\.\d{1,2})?)\s*(?:[-–].*)?$", re.IGNORECASE)
+            # Allow trailing notes after the amount (e.g. "3. Amy Choy RM50 -P"),
+            # and treat "RM" as optional since some rows just end with a bare number
+            # (e.g. "黄美娥 10" meaning RM10)
+            _line_re = re.compile(r"^\s*(?:\d+[\).\:]\s*)?(.+?)[\s,，]*[-–]?\s*(?:RM\s*)?([\d,]+(?:\.\d{1,2})?)\s*(?:[-–].*)?$", re.IGNORECASE)
             _parsed = []
             for _ln in raw_donor_cell.splitlines():
                 _ln = _ln.strip()
