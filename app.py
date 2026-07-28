@@ -105,10 +105,16 @@ GL_SHORT_DESC = {code: desc for code, desc, _ in DONATION_MAP}
 
 
 def _parse_amount(val) -> float:
-    """Parse 'RM 30.00' or '30.00' to float."""
+    """Parse 'RM 30.00' or '30.00' to float. Blank/dash/non-numeric cells become 0.0."""
     if pd.isna(val):
         return 0.0
-    return float(re.sub(r"[^\d.]", "", str(val)))
+    cleaned = re.sub(r"[^\d.]", "", str(val))
+    if not cleaned or cleaned == ".":
+        return 0.0
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
 
 
 def _gl_display(gl_code: str) -> str:
