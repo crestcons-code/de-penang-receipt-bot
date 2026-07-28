@@ -1,5 +1,6 @@
 # autocount_api.py - Autocount Cloud API wrapper
 
+import time
 import requests
 from config_loader import AUTOCOUNT
 
@@ -19,14 +20,28 @@ class AutocountClient:
         }
 
     def _get(self, path: str, params: dict = None) -> dict:
-        resp = requests.get(
-            f"{self.base_url}/{path.lstrip('/')}",
-            headers=self._headers(),
-            params=params,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        # Retry on rate limits (429) and transient server errors (5xx) instead of
+        # letting a single blip crash the whole app - GET requests are read-only
+        # and safe to repeat.
+        last_err = None
+        for attempt in range(4):
+            resp = requests.get(
+                f"{self.base_url}/{path.lstrip('/')}",
+                headers=self._headers(),
+                params=params,
+                timeout=15,
+            )
+            if resp.status_code == 429 or resp.status_code >= 500:
+                last_err = requests.exceptions.HTTPError(
+                    f"HTTP {resp.status_code} from Autocount ({path})", response=resp
+                )
+                if attempt < 3:
+                    time.sleep(3 * (attempt + 1))
+                    continue
+                raise last_err
+            resp.raise_for_status()
+            return resp.json()
+        raise last_err
 
     def _post(self, path: str, payload: dict) -> dict:
         resp = requests.post(

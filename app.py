@@ -453,15 +453,18 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
                     for r in results if r["Status"] == "error"
                 ]
                 # Re-fetch current OR numbers before retry, in case Autocount state changed
-                with st.spinner("Re-checking Autocount before retry..."):
-                    retry_client = AutocountClient()
-                    retry_dates = [f["Date"] for f in failed_items]
-                    fresh_posted = retry_client.get_posted_receipts(min(retry_dates), max(retry_dates))
-                    fresh_existing = {p["docNo"] for p in fresh_posted}
-                retry_results = _post_rows(failed_items, fresh_existing)
-                # Replace error entries with their retry outcome, keep successes as-is
-                new_results = [r for r in results if r["Status"] == "success"] + retry_results
-                st.session_state["dana_post_results"] = new_results
+                try:
+                    with st.spinner("Re-checking Autocount before retry..."):
+                        retry_client = AutocountClient()
+                        retry_dates = [f["Date"] for f in failed_items]
+                        fresh_posted = retry_client.get_posted_receipts(min(retry_dates), max(retry_dates))
+                        fresh_existing = {p["docNo"] for p in fresh_posted}
+                    retry_results = _post_rows(failed_items, fresh_existing)
+                    # Replace error entries with their retry outcome, keep successes as-is
+                    new_results = [r for r in results if r["Status"] == "success"] + retry_results
+                    st.session_state["dana_post_results"] = new_results
+                except Exception as e:
+                    st.error(f"Could not reach Autocount right now: {e}\n\nPlease wait a moment and try the retry again.")
                 st.rerun()
 
         buf = io.BytesIO()
@@ -551,19 +554,24 @@ with tab_bank:
         st.subheader("Step 2 - Review & Edit Before Posting")
         st.info("Check each row. Change GL Account, Description, or OR Number if needed (e.g. to reuse a missing OR number from a failed post). Uncheck rows you want to skip.")
 
-        with st.spinner("Checking Autocount for existing records and last OR number..."):
-            client_pre = AutocountClient()
-            from_date = df_raw["date"].min().strftime("%Y-%m-%d")
-            to_date   = df_raw["date"].max().strftime("%Y-%m-%d")
-            posted    = client_pre.get_posted_receipts(from_date, to_date)
-            posted_keys = {(p["date"], round(p["amount"], 2)) for p in posted}
-            posted_or_numbers = {p["docNo"] for p in posted}
+        try:
+            with st.spinner("Checking Autocount for existing records and last OR number..."):
+                client_pre = AutocountClient()
+                from_date = df_raw["date"].min().strftime("%Y-%m-%d")
+                to_date   = df_raw["date"].max().strftime("%Y-%m-%d")
+                posted    = client_pre.get_posted_receipts(from_date, to_date)
+                posted_keys = {(p["date"], round(p["amount"], 2)) for p in posted}
+                posted_or_numbers = {p["docNo"] for p in posted}
 
-            first_date = df_raw["date"].iloc[0].strftime("%Y-%m-%d")
-            yy, mm = first_date[2:4], first_date[5:7]
-            prefix = f"OR-{yy}{mm}"
-            last_or = client_pre.get_last_or_number(prefix=prefix)
-            next_seq = (int(last_or[len(prefix):]) + 1) if (last_or and last_or.startswith(prefix)) else 1
+                first_date = df_raw["date"].iloc[0].strftime("%Y-%m-%d")
+                yy, mm = first_date[2:4], first_date[5:7]
+                prefix = f"OR-{yy}{mm}"
+                last_or = client_pre.get_last_or_number(prefix=prefix)
+                next_seq = (int(last_or[len(prefix):]) + 1) if (last_or and last_or.startswith(prefix)) else 1
+        except Exception as e:
+            st.error(f"Could not reach Autocount right now: {e}\n\nThis is usually temporary (rate limit or "
+                     "network blip) - please wait a moment and try uploading again.")
+            st.stop()
 
         rows = []
         skipped_count = 0
@@ -626,34 +634,39 @@ with tab_dana:
         st.info("Check each row. Change GL Account, Description, or OR Number if needed (e.g. to reuse a missing OR number from a failed post). Uncheck rows you want to skip.")
 
         # Auto-assign OR numbers only for rows that don't have one
-        with st.spinner("Checking Autocount for existing records and last OR number..."):
-            client_pre = AutocountClient()
-            from_date = df_dana["date"].min()
-            to_date   = df_dana["date"].max()
-            posted    = client_pre.get_posted_receipts(from_date, to_date)
-            posted_keys = {(p["date"], round(p["amount"], 2), p["dealWith"]) for p in posted}
+        try:
+            with st.spinner("Checking Autocount for existing records and last OR number..."):
+                client_pre = AutocountClient()
+                from_date = df_dana["date"].min()
+                to_date   = df_dana["date"].max()
+                posted    = client_pre.get_posted_receipts(from_date, to_date)
+                posted_keys = {(p["date"], round(p["amount"], 2), p["dealWith"]) for p in posted}
 
-            gap_queue = []
-            if needs_or > 0:
-                sample_date = df_dana["date"].iloc[0]
-                yy, mm = sample_date[2:4], sample_date[5:7]
-                prefix = f"OR-{yy}{mm}"
-                last_or = client_pre.get_last_or_number(prefix=prefix)
-                max_used = int(last_or[len(prefix):]) if (last_or and last_or.startswith(prefix)) else 0
+                gap_queue = []
+                if needs_or > 0:
+                    sample_date = df_dana["date"].iloc[0]
+                    yy, mm = sample_date[2:4], sample_date[5:7]
+                    prefix = f"OR-{yy}{mm}"
+                    last_or = client_pre.get_last_or_number(prefix=prefix)
+                    max_used = int(last_or[len(prefix):]) if (last_or and last_or.startswith(prefix)) else 0
 
-                # Find any gap numbers (missing OR-YYMMNNN) within this month's range so they
-                # get backfilled automatically instead of creating new gaps further down.
-                used_nums = set()
-                for p in posted:
-                    doc = p["docNo"]
-                    if doc.startswith(prefix) and doc[len(prefix):].isdigit():
-                        used_nums.add(int(doc[len(prefix):]))
-                gap_queue = [n for n in range(1, max_used) if n not in used_nums]
+                    # Find any gap numbers (missing OR-YYMMNNN) within this month's range so they
+                    # get backfilled automatically instead of creating new gaps further down.
+                    used_nums = set()
+                    for p in posted:
+                        doc = p["docNo"]
+                        if doc.startswith(prefix) and doc[len(prefix):].isdigit():
+                            used_nums.add(int(doc[len(prefix):]))
+                    gap_queue = [n for n in range(1, max_used) if n not in used_nums]
 
-                next_seq = max_used + 1
-            else:
-                next_seq = 1
-                prefix = ""
+                    next_seq = max_used + 1
+                else:
+                    next_seq = 1
+                    prefix = ""
+        except Exception as e:
+            st.error(f"Could not reach Autocount right now: {e}\n\nThis is usually temporary (rate limit or "
+                     "network blip) - please wait a moment and try uploading again.")
+            st.stop()
 
         # Build set of OR numbers already in Autocount for fast lookup
         # Also keep base numbers (strip suffixes like -1, -2, -3) so OR-2606153 matches OR-2606153-1
@@ -920,8 +933,12 @@ with tab_recon:
                 st.error(f"Error reading dana list: {e}")
                 st.stop()
 
-            with st.spinner("Fetching OR records from Autocount..."):
-                posted_r = _fetch_posted_cached(df_recon["date"].min(), df_recon["date"].max())
+            try:
+                with st.spinner("Fetching OR records from Autocount..."):
+                    posted_r = _fetch_posted_cached(df_recon["date"].min(), df_recon["date"].max())
+            except Exception as e:
+                st.error(f"Could not reach Autocount right now: {e}\n\nPlease wait a moment and try again.")
+                st.stop()
 
             ac_or_numbers, ac_by_date_amount, ac_by_docno = _build_ac_lookups(posted_r)
 
@@ -1164,10 +1181,14 @@ with tab_recon:
                 st.error(f"Error reading bank statement: {e}")
                 st.stop()
 
-            with st.spinner("Fetching OR records from Autocount..."):
-                from_r   = df_bank["date"].min().strftime("%Y-%m-%d")
-                to_r     = df_bank["date"].max().strftime("%Y-%m-%d")
-                posted_r = _fetch_posted_cached(from_r, to_r)
+            try:
+                with st.spinner("Fetching OR records from Autocount..."):
+                    from_r   = df_bank["date"].min().strftime("%Y-%m-%d")
+                    to_r     = df_bank["date"].max().strftime("%Y-%m-%d")
+                    posted_r = _fetch_posted_cached(from_r, to_r)
+            except Exception as e:
+                st.error(f"Could not reach Autocount right now: {e}\n\nPlease wait a moment and try again.")
+                st.stop()
 
             # Match bank rows to Autocount records in 3 passes so split receipts work:
             #   A. exact date+amount match against whole (non-suffixed) receipts
@@ -1281,12 +1302,15 @@ with tab_print:
             if lookup_from > lookup_to:
                 st.error("From Date must be before To Date.")
             else:
-                with st.spinner("Fetching OR records from Autocount..."):
-                    lookup_client = AutocountClient()
-                    lookup_results = lookup_client.get_posted_receipts(
-                        lookup_from.strftime("%Y-%m-%d"), lookup_to.strftime("%Y-%m-%d")
-                    )
-                st.session_state["print_lookup_results"] = lookup_results
+                try:
+                    with st.spinner("Fetching OR records from Autocount..."):
+                        lookup_client = AutocountClient()
+                        lookup_results = lookup_client.get_posted_receipts(
+                            lookup_from.strftime("%Y-%m-%d"), lookup_to.strftime("%Y-%m-%d")
+                        )
+                    st.session_state["print_lookup_results"] = lookup_results
+                except Exception as e:
+                    st.error(f"Could not reach Autocount right now: {e}\n\nPlease wait a moment and try again.")
 
     else:
         or_search_text = st.text_area(
@@ -1341,28 +1365,31 @@ with tab_print:
                 if bad:
                     st.warning(f"Could not parse month from: {', '.join(bad)} (expected format OR-YYMMNNN)")
 
-                lookup_client = AutocountClient()
-                lookup_results = []
-                with st.spinner(f"Fetching OR records from Autocount ({len(months)} month(s))..."):
-                    for yymm in months:
-                        yy, mm = yymm[:2], yymm[2:]
-                        year = 2000 + int(yy)
-                        from_d = f"{year:04d}-{mm}-01"
-                        to_d   = (pd.Timestamp(from_d) + pd.offsets.MonthEnd(1)).strftime("%Y-%m-%d")
-                        lookup_results.extend(lookup_client.get_posted_receipts(from_d, to_d))
+                try:
+                    lookup_client = AutocountClient()
+                    lookup_results = []
+                    with st.spinner(f"Fetching OR records from Autocount ({len(months)} month(s))..."):
+                        for yymm in months:
+                            yy, mm = yymm[:2], yymm[2:]
+                            year = 2000 + int(yy)
+                            from_d = f"{year:04d}-{mm}-01"
+                            to_d   = (pd.Timestamp(from_d) + pd.offsets.MonthEnd(1)).strftime("%Y-%m-%d")
+                            lookup_results.extend(lookup_client.get_posted_receipts(from_d, to_d))
 
-                # Keep exact matches, or suffixed ORs whose base matches (OR-2607180-1 for OR-2607180)
-                def _base(doc):
-                    return _re7.sub(r"-\d+$", "", doc)
-                lookup_results = [p for p in lookup_results
-                                  if p["docNo"] in wanted or _base(p["docNo"]) in wanted]
+                    # Keep exact matches, or suffixed ORs whose base matches (OR-2607180-1 for OR-2607180)
+                    def _base(doc):
+                        return _re7.sub(r"-\d+$", "", doc)
+                    lookup_results = [p for p in lookup_results
+                                      if p["docNo"] in wanted or _base(p["docNo"]) in wanted]
 
-                found_docs = {p["docNo"] for p in lookup_results} | {_base(p["docNo"]) for p in lookup_results}
-                not_found = wanted - found_docs
-                if not_found:
-                    st.warning(f"Not found in Autocount: {', '.join(sorted(not_found))}")
+                    found_docs = {p["docNo"] for p in lookup_results} | {_base(p["docNo"]) for p in lookup_results}
+                    not_found = wanted - found_docs
+                    if not_found:
+                        st.warning(f"Not found in Autocount: {', '.join(sorted(not_found))}")
 
-                st.session_state["print_lookup_results"] = lookup_results
+                    st.session_state["print_lookup_results"] = lookup_results
+                except Exception as e:
+                    st.error(f"Could not reach Autocount right now: {e}\n\nPlease wait a moment and try again.")
 
     # Optional: upload the dana list to add WhatsApp numbers (not stored in Autocount)
     print_dana_file = st.file_uploader(
