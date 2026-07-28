@@ -690,15 +690,20 @@ with tab_dana:
         for p in posted:
             _by_date_amt.setdefault((p["date"], round(float(p["amount"]), 2)), []).append(p)
 
+        def _norm_ws(s):
+            return _re8.sub(r"\s+", " ", s).strip()
+
         def _find_duplicate(date_, amount_, donor_key_):
+            donor_norm = _norm_ws(donor_key_)
             for p in _by_date_amt.get((date_, amount_), []):
                 dw = p.get("dealWith", "")
-                if dw == donor_key_:
+                dw_norm = _norm_ws(dw)
+                if dw == donor_key_ or dw_norm == donor_norm:
                     return p
                 # Autocount truncates DealWith around 100 chars for long multi-donor
                 # entries (sometimes trimming a trailing char too, so allow 90-100)
                 # rather than requiring an exact 100-char length
-                if 90 <= len(dw) <= 100 and donor_key_.startswith(dw):
+                if 90 <= len(dw) <= 100 and donor_norm.startswith(dw_norm):
                     return p
             return None
 
@@ -988,12 +993,18 @@ with tab_recon:
             for p in posted_r:
                 _by_date_amt.setdefault((p["date"], round(float(p["amount"]), 2)), []).append(p)
 
+            def _norm_ws2(s):
+                return _re3.sub(r"\s+", " ", s).strip()
+
             def _find_by_donor(date_, amount_, donor_key_):
+                donor_norm = _norm_ws2(donor_key_)
                 for p in _by_date_amt.get((date_, amount_), []):
                     if p["docNo"] in _claimed_donor_docs:
                         continue
                     dw = p.get("dealWith", "")
-                    if dw == donor_key_ or (90 <= len(dw) <= 100 and donor_key_.startswith(dw)):
+                    dw_norm = _norm_ws2(dw)
+                    if dw == donor_key_ or dw_norm == donor_norm or \
+                       (90 <= len(dw) <= 100 and donor_norm.startswith(dw_norm)):
                         return p
                 return None
             _claimed_donor_docs = set()
