@@ -75,13 +75,26 @@ def read_dana_list(client: gspread.Client, spreadsheet_id: str, tab_name: str) -
     """
     Read a worksheet tab back as a DataFrame matching the dana list Excel layout,
     ready to pass into app.py's _parse_dana_dataframe().
+
+    Reads by COLUMN POSITION rather than requiring exact header text - real sheets
+    often have extra leading/trailing spaces or minor wording differences in the
+    header row, and _parse_dana_dataframe only relies on column order anyway
+    (same as how the Excel upload path works).
     """
+    import numpy as np
     sh = client.open_by_key(spreadsheet_id)
     ws = sh.worksheet(tab_name)
-    records = ws.get_all_records(expected_headers=DANA_LIST_HEADERS)
-    df = pd.DataFrame(records)
-    if df.empty:
-        df = pd.DataFrame(columns=DANA_LIST_HEADERS)
+    values = ws.get_all_values()
+    if len(values) < 2:
+        return pd.DataFrame(columns=DANA_LIST_HEADERS)
+
+    header = [str(h).strip() for h in values[0]]
+    data = values[1:]
+    # get_all_values() pads/truncates every row to the header's width already
+    df = pd.DataFrame(data, columns=header)
+    # Blank cells come back as "" from Sheets - treat them as missing, same as
+    # how pandas reads genuinely empty Excel cells, so pd.isna() checks work
+    df = df.replace(r"^\s*$", np.nan, regex=True)
     return df
 
 
