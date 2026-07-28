@@ -571,8 +571,9 @@ with tab_bank:
                        "for volunteers to fill in donor names/GL codes as WhatsApp messages come in.")
             _gs_cfg = get_google_sheets_config()
             if not _gs_cfg.get("service_account_info") or not _gs_cfg.get("spreadsheet_id"):
-                st.info("Google Sheets isn't set up yet. Ask your developer to configure the service "
-                        "account credentials and spreadsheet ID.")
+                st.info(f"Google Sheets isn't set up yet. "
+                        f"[debug: service_account_info={'OK' if _gs_cfg.get('service_account_info') else 'MISSING'}, "
+                        f"spreadsheet_id={_gs_cfg.get('spreadsheet_id') or 'MISSING'}]")
             else:
                 _default_tab = df_raw["date"].min().strftime("%b%Y")
                 _tab_name = st.text_input("Sheet tab name", value=_default_tab, key="push_tab_name")
