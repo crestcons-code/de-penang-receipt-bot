@@ -6,3 +6,5 @@ requests>=2.31
 streamlit-authenticator>=0.4
 bcrypt>=4.0
 pyyaml>=6.0
+gspread>=6.0
+google-auth>=2.30

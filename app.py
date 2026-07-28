@@ -10,7 +10,13 @@ sys.path.insert(0, '.')
 from parse_maybank import load_statement
 from donation_mapping import map_to_gl, DONATION_MAP, get_department, GL_DEPARTMENT
 from autocount_api import AutocountClient
-from config_loader import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD
+from config_loader import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD, get_google_sheets_config
+from google_sheets_client import (
+    get_client as gs_get_client,
+    push_bank_statement as gs_push_bank_statement,
+    read_dana_list as gs_read_dana_list,
+    list_tabs as gs_list_tabs,
+)
 
 st.set_page_config(page_title="DE Penang Autocount Donation Receipts Apps", page_icon="ðŸ¦", layout="wide")
 
@@ -130,7 +136,17 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
     """
     df = pd.read_excel(file, header=0, sheet_name=0)
     df.columns = [str(c).strip() for c in df.columns]
+    return _parse_dana_dataframe(df, skip_blank_gl)
 
+
+def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.DataFrame:
+    """
+    Core dana list parsing logic, shared by the Excel upload path and (later) a Google
+    Sheets source - both just need to produce a DataFrame with the same 12-column
+    layout (Transaction Date, Desc1, Desc2, Beneficiary, Account, Amount, Receipts No,
+    accounting code, Dana description, Donor name, Whatsapp name, Whatsapp Mobile)
+    before calling this function.
+    """
     # Identify columns by position (structure is fixed)
     cols = df.columns
     if len(cols) < 9:
@@ -549,6 +565,28 @@ with tab_bank:
             st.stop()
 
         st.success(f"Found **{len(df_raw)} incoming payment(s)** totalling **RM {df_raw['credit'].sum():,.2f}**")
+
+        with st.expander("📤 Push to Google Sheet for volunteer matching (optional)"):
+            st.caption("Sends these transactions into a new tab of the dana list Google Sheet, ready "
+                       "for volunteers to fill in donor names/GL codes as WhatsApp messages come in.")
+            _gs_cfg = get_google_sheets_config()
+            if not _gs_cfg.get("service_account_info") or not _gs_cfg.get("spreadsheet_id"):
+                st.info("Google Sheets isn't set up yet. Ask your developer to configure the service "
+                        "account credentials and spreadsheet ID.")
+            else:
+                _default_tab = df_raw["date"].min().strftime("%b%Y")
+                _tab_name = st.text_input("Sheet tab name", value=_default_tab, key="push_tab_name")
+                _overwrite = st.checkbox("Overwrite if this tab already exists", value=False, key="push_overwrite")
+                if st.button("📤 Push to Google Sheet", key="push_to_sheet_btn"):
+                    try:
+                        gs_client = gs_get_client(_gs_cfg["service_account_info"])
+                        url = gs_push_bank_statement(gs_client, _gs_cfg["spreadsheet_id"], _tab_name,
+                                                     df_raw, overwrite=_overwrite)
+                        st.success(f"Pushed {len(df_raw)} transaction(s) to tab '{_tab_name}'.")
+                        st.markdown(f"[Open the sheet]({url})")
+                    except Exception as e:
+                        st.error(f"Could not push to Google Sheet: {e}")
+
         st.divider()
 
         st.subheader("Step 2 - Review & Edit Before Posting")
@@ -607,16 +645,49 @@ with tab_bank:
 # TAB 2 - Dana List Excel
 # ==============================================
 with tab_dana:
-    st.subheader("Step 1 - Upload Dana List Excel")
-    st.caption("Upload the monthly dana list Excel file (e.g. DEPG Dana list 2026 June.xlsx)")
-    dana_file = st.file_uploader("Upload Dana List Excel", type=["xlsx"], key="dana_upload")
+    st.subheader("Step 1 - Load Dana List")
+    dana_source = st.radio("Source:", ["Upload Excel", "Load from Google Sheet"], horizontal=True, key="dana_source")
 
-    if dana_file:
-        try:
-            df_dana, blank_gl = load_dana_list(dana_file)
-        except Exception as e:
-            st.error(f"Error reading dana list: {e}")
-            st.stop()
+    df_dana = None
+    blank_gl = 0
+
+    if dana_source == "Upload Excel":
+        st.caption("Upload the monthly dana list Excel file (e.g. DEPG Dana list 2026 June.xlsx)")
+        dana_file = st.file_uploader("Upload Dana List Excel", type=["xlsx"], key="dana_upload")
+        if dana_file:
+            try:
+                df_dana, blank_gl = load_dana_list(dana_file)
+            except Exception as e:
+                st.error(f"Error reading dana list: {e}")
+                st.stop()
+
+    else:
+        st.caption("Read the live dana list directly from Google Sheets - no download/upload needed.")
+        _gs_cfg = get_google_sheets_config()
+        if not _gs_cfg.get("service_account_info") or not _gs_cfg.get("spreadsheet_id"):
+            st.info("Google Sheets isn't set up yet. Ask your developer to configure the service "
+                    "account credentials and spreadsheet ID.")
+        else:
+            try:
+                gs_client = gs_get_client(_gs_cfg["service_account_info"])
+                tabs = gs_list_tabs(gs_client, _gs_cfg["spreadsheet_id"])
+            except Exception as e:
+                st.error(f"Could not connect to Google Sheets: {e}")
+                tabs = []
+            if tabs:
+                sheet_tab = st.selectbox("Select sheet tab", tabs, key="dana_sheet_tab")
+                if st.button("📥 Load from Google Sheet", key="load_from_sheet_btn"):
+                    try:
+                        with st.spinner("Reading dana list from Google Sheets..."):
+                            df_raw_sheet = gs_read_dana_list(gs_client, _gs_cfg["spreadsheet_id"], sheet_tab)
+                            df_dana, blank_gl = _parse_dana_dataframe(df_raw_sheet, skip_blank_gl=True)
+                        st.session_state["dana_from_sheet"] = (df_dana, blank_gl)
+                    except Exception as e:
+                        st.error(f"Could not read dana list from Google Sheet: {e}")
+                elif "dana_from_sheet" in st.session_state:
+                    df_dana, blank_gl = st.session_state["dana_from_sheet"]
+
+    if df_dana is not None:
 
         total_amt = df_dana["amount"].sum()
         st.success(f"Found **{len(df_dana)} donation(s)** totalling **RM {total_amt:,.2f}**")
@@ -800,7 +871,7 @@ with tab_dana:
         render_review_and_post(rows, skipped_count, existing_or_numbers=posted_or_numbers)
 
     else:
-        st.info("Upload the monthly dana list Excel file to get started.")
+        st.info("Upload the monthly dana list Excel file, or load one from Google Sheets, to get started.")
 
 # ==============================================
 # TAB 3 - Reconciliation

@@ -11,3 +11,13 @@ AUTOCOUNT = {
 DEFAULT_PAYMENT_METHOD = "BANK"
 MAYBANK_GL_CODE = "310-1000"   # CASH AT BANK - MAYBANK
 MATCH_THRESHOLD = 75
+
+# Optional: Google Sheets integration for the volunteer dana-entry workflow.
+# service_account_json_path: path to the downloaded service account JSON key file
+#   (from Google Cloud Console > APIs & Services > Credentials).
+# spreadsheet_id: the long ID in the dana list Google Sheet's URL, e.g.
+#   https://docs.google.com/spreadsheets/d/THIS_PART_IS_THE_ID/edit
+GOOGLE_SHEETS = {
+    "service_account_json_path": "google_service_account.json",
+    "spreadsheet_id": "your-spreadsheet-id-here",
+}

@@ -1,5 +1,7 @@
 # Credentials — never commit
 config.py
+google_service_account.json
+*.googlekey.json
 
 # Bank statements — private financial data
 *.csv
