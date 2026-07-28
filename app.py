@@ -174,7 +174,9 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
             # Allow trailing notes after the amount (e.g. "3. Amy Choy RM50 -P"),
             # and treat "RM" as optional since some rows just end with a bare number
             # (e.g. "黄美娥 10" meaning RM10)
-            _line_re = re.compile(r"^\s*(?:\d+[\).\:]\s*)?(.+?)[\s,，]*[-–]?\s*(?:RM\s*)?([\d,]+(?:\.\d{1,2})?)\s*(?:[-–].*)?$", re.IGNORECASE)
+            # Amount group must START with a digit, so a lone trailing comma (with no
+            # actual number) can't match and produce an empty string on float()
+            _line_re = re.compile(r"^\s*(?:\d+[\).\:]\s*)?(.+?)[\s,，]*[-–]?\s*(?:RM\s*)?(\d[\d,]*(?:\.\d{1,2})?)\s*(?:[-–].*)?$", re.IGNORECASE)
             _parsed = []
             for _ln in raw_donor_cell.splitlines():
                 _ln = _ln.strip()
@@ -184,8 +186,12 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
                 if not _m:
                     _parsed = []
                     break
-                _parsed.append({"description": _m.group(1).strip(),
-                                "amount": float(_m.group(2).replace(",", ""))})
+                try:
+                    _amt = float(_m.group(2).replace(",", ""))
+                except ValueError:
+                    _parsed = []
+                    break
+                _parsed.append({"description": _m.group(1).strip(), "amount": _amt})
             if len(_parsed) > 1 and abs(sum(p["amount"] for p in _parsed) - amount) < 0.01:
                 detail_lines = _parsed
 
