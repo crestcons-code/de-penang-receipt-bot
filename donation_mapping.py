@@ -9,6 +9,9 @@ DONATION_MAP = [
     ("500-5001", "Lamp Lighting",           ["lamp light", "pelita"]),
     ("500-5002", "Cheng Beng",              ["cheng beng", "qing ming"]),
     ("500-5003", "Wesak",                   ["wesak", "waisak", "kuti", "sima"]),
+    # Forest Monastery Road Construction must be checked BEFORE the generic
+    # "kathina" match below - both mention Kathina, but they're different GL funds
+    ("500-5014", "Forest Monastery Road Construction", ["rc g", "road construction", "forest monastery"]),
     ("500-5004", "Kathina",                 ["kathina"]),
     ("500-5005", "Sala Hall",               ["sala hall", "sala"]),
     ("500-5006", "Farm to Dana",            ["farm to dana", "farm dana"]),
