@@ -16,6 +16,7 @@ from google_sheets_client import (
     push_bank_statement as gs_push_bank_statement,
     read_dana_list as gs_read_dana_list,
     list_tabs as gs_list_tabs,
+    write_or_numbers as gs_write_or_numbers,
 )
 
 st.set_page_config(page_title="DE Penang Autocount Donation Receipts Apps", page_icon="ðŸ¦", layout="wide")
@@ -255,6 +256,9 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
             "department":  get_department(gl_code),
             "amount":      amount,
             "mobile":      mobile,
+            # Present only when the source was Google Sheets - lets successfully
+            # posted OR numbers be written back to the exact right row afterward.
+            "sheet_row":   int(r["_sheet_row"]) if "_sheet_row" in df.columns and pd.notna(r["_sheet_row"]) else None,
         })
 
     return pd.DataFrame(rows), blank_gl_count[0]
@@ -397,6 +401,7 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
             "Amount (RM)":      st.column_config.NumberColumn("Amount (RM)", format="RM %.2f", disabled=True),
             "WhatsApp Mobile":  st.column_config.TextColumn("WhatsApp Mobile", help="Edit to add or correct the donor's WhatsApp number"),
             "_details":         None,   # hidden: per-donor detail lines (JSON) for multi-donor receipts
+            "_sheet_row":       None,   # hidden: source Google Sheet row number, for OR write-back after posting
         },
         use_container_width=True,
         hide_index=True,
@@ -434,8 +439,24 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
                 "Amount (RM)":     float(row["Amount (RM)"]),
                 "WhatsApp Mobile": str(row.get("WhatsApp Mobile", "")).strip(),
                 "_details":        str(row.get("_details", "") or ""),
+                "_sheet_row":      row.get("_sheet_row"),
             })
         st.session_state["dana_post_results"] = _post_rows(post_items, existing_or_numbers)
+        _sheet_writeback = st.session_state.get("dana_sheet_writeback")
+        if _sheet_writeback:
+            _row_or_map = {
+                int(item["_sheet_row"]): res["Doc No"]
+                for item, res in zip(post_items, st.session_state["dana_post_results"])
+                if res["Status"] == "success" and item.get("_sheet_row") is not None and pd.notna(item.get("_sheet_row"))
+            }
+            if _row_or_map:
+                try:
+                    _wb_client = gs_get_client(_sheet_writeback["service_account_info"])
+                    gs_write_or_numbers(_wb_client, _sheet_writeback["spreadsheet_id"],
+                                        _sheet_writeback["tab_name"], _row_or_map)
+                    st.success(f"Wrote OR number back to column G for {len(_row_or_map)} row(s) in the Google Sheet.")
+                except Exception as e:
+                    st.warning(f"Posted successfully, but could not write OR numbers back to the Google Sheet: {e}")
 
     if "dana_post_results" in st.session_state:
         results = st.session_state["dana_post_results"]
@@ -682,6 +703,11 @@ with tab_dana:
                             df_raw_sheet = gs_read_dana_list(gs_client, _gs_cfg["spreadsheet_id"], sheet_tab)
                             df_dana, blank_gl = _parse_dana_dataframe(df_raw_sheet, skip_blank_gl=True)
                         st.session_state["dana_from_sheet"] = (df_dana, blank_gl)
+                        st.session_state["dana_sheet_writeback"] = {
+                            "service_account_info": _gs_cfg["service_account_info"],
+                            "spreadsheet_id": _gs_cfg["spreadsheet_id"],
+                            "tab_name": sheet_tab,
+                        }
                     except Exception as e:
                         st.error(f"Could not read dana list from Google Sheet: {e}")
                 elif "dana_from_sheet" in st.session_state:
@@ -834,6 +860,7 @@ with tab_dana:
                 "Amount (RM)":    amount,
                 "WhatsApp Mobile": txn.get("mobile", ""),
                 "_details":       txn.get("detail_json", ""),
+                "_sheet_row":     txn.get("sheet_row"),
             })
 
         if skipped_rows:
@@ -864,6 +891,7 @@ with tab_dana:
                             "Department":     txn["department"],
                             "Amount (RM)":    amount,
                             "WhatsApp Mobile": txn.get("mobile", ""),
+                            "_sheet_row":     txn.get("sheet_row"),
                         })
                     if reinclude_idx:
                         st.success(f"{len(reinclude_idx)} row(s) added to Step 2 below.")

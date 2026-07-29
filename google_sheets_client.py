@@ -95,7 +95,26 @@ def read_dana_list(client: gspread.Client, spreadsheet_id: str, tab_name: str) -
     # Blank cells come back as "" from Sheets - treat them as missing, same as
     # how pandas reads genuinely empty Excel cells, so pd.isna() checks work
     df = df.replace(r"^\s*$", np.nan, regex=True)
+    # Track each row's actual sheet row number (1=header, so first data row is 2)
+    # so a caller can write results (like the OR number after posting) back to
+    # the exact right row later.
+    df["_sheet_row"] = range(2, len(df) + 2)
     return df
+
+
+def write_or_numbers(client: gspread.Client, spreadsheet_id: str, tab_name: str,
+                     row_or_map: dict) -> None:
+    """
+    Write OR numbers back into column G (Receipts No) for specific rows.
+    row_or_map: {sheet_row_number: "OR-2607123", ...}
+    One batched API call regardless of how many rows are updated.
+    """
+    if not row_or_map:
+        return
+    sh = client.open_by_key(spreadsheet_id)
+    ws = sh.worksheet(tab_name)
+    updates = [{"range": f"G{row}", "values": [[or_no]]} for row, or_no in row_or_map.items()]
+    ws.batch_update(updates, value_input_option="USER_ENTERED")
 
 
 def list_tabs(client: gspread.Client, spreadsheet_id: str) -> list:
