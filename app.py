@@ -1776,7 +1776,7 @@ with tab_entry:
                     "Mobile":          r.get("mobile", ""),
                     "Target Sheet Row": matched_row,
                     "Confidence":      r.get("confidence", ""),
-                    "Notes":           r.get("notes", "") or r.get("_error", "") or match_note,
+                    "Notes":           " | ".join(filter(None, [r.get("_error", ""), match_note, r.get("notes", "")])),
                 })
 
             df_review = pd.DataFrame(review_rows)
