@@ -1650,8 +1650,9 @@ Follow these steps in **Autocount Cloud** to print and save these receipts as on
 with tab_entry:
     st.subheader("📷 Dana Entry — Slip + WhatsApp Text (Beta)")
     st.caption("Upload a batch of bank-in slip screenshots, paste each donor's WhatsApp message, "
-               "and let AI propose the donation details. You review and confirm before anything "
-               "is added to the dana list.")
+               "and let AI propose the donation details. Each slip is MATCHED to its existing row "
+               "in the bank statement tab (by date + amount) - the result fills in columns H-L of "
+               "that row, it does not create a new row.")
 
     _api_key = get_anthropic_api_key()
     if not _api_key:
@@ -1662,6 +1663,8 @@ with tab_entry:
         except ImportError as e:
             st.error(f"Could not load the AI extraction module: {e}")
             st.stop()
+        from google_sheets_client import find_unfilled_rows as gs_find_unfilled_rows
+        from google_sheets_client import write_donor_details as gs_write_donor_details
 
         _gs_cfg_entry = get_google_sheets_config()
         _target_tab = None
@@ -1669,12 +1672,12 @@ with tab_entry:
             try:
                 _entry_client = gs_get_client(_gs_cfg_entry["service_account_info"])
                 _entry_tabs = gs_list_tabs(_entry_client, _gs_cfg_entry["spreadsheet_id"])
-                _target_tab = st.selectbox("Add confirmed entries to sheet tab:", _entry_tabs, key="entry_target_tab")
+                _target_tab = st.selectbox("Match against bank statement tab:", _entry_tabs, key="entry_target_tab")
             except Exception as e:
                 st.warning(f"Could not connect to Google Sheets: {e}")
         else:
-            st.warning("Google Sheets isn't set up - confirmed entries can still be reviewed and "
-                       "downloaded, just not written to a sheet automatically.")
+            st.warning("Google Sheets isn't set up - this feature needs it to match slips against "
+                       "existing bank statement rows.")
 
         st.divider()
         uploaded_slips = st.file_uploader(
@@ -1699,7 +1702,7 @@ with tab_entry:
                     wa_texts.append(txt)
                 st.divider()
 
-            if st.button(f"🔍 Process Batch ({len(uploaded_slips)} slip(s))", type="primary"):
+            if st.button(f"🔍 Process Batch ({len(uploaded_slips)} slip(s))", type="primary", disabled=not _target_tab):
                 extracted = []
                 progress = st.progress(0)
                 for i, (slip, txt) in enumerate(zip(uploaded_slips, wa_texts)):
@@ -1722,11 +1725,24 @@ with tab_entry:
                     extracted.append(result)
                     progress.progress((i + 1) / len(uploaded_slips))
                 st.session_state["entry_extracted"] = extracted
+                # Build the match index fresh each run, and consume candidates as we
+                # auto-match so two slips with the same date+amount don't both claim
+                # the same sheet row.
+                try:
+                    match_index = gs_find_unfilled_rows(_entry_client, _gs_cfg_entry["spreadsheet_id"], _target_tab)
+                except Exception as e:
+                    st.error(f"Could not read '{_target_tab}' to match against: {e}")
+                    match_index = {}
+                st.session_state["entry_match_index"] = match_index
 
         if "entry_extracted" in st.session_state:
             extracted = st.session_state["entry_extracted"]
+            match_index = {k: list(v) for k, v in st.session_state.get("entry_match_index", {}).items()}
             st.divider()
             st.subheader("Review & Confirm")
+            st.caption("Target Sheet Row is auto-matched by date + amount against unfilled rows in "
+                       "the bank statement tab. Blank = no unique match found - fill in the row "
+                       "number yourself after checking the sheet, or leave blank to skip.")
 
             review_rows = []
             for r in extracted:
@@ -1736,17 +1752,31 @@ with tab_entry:
                     gl_code, _, _ = map_to_gl(r["description"])
                 else:
                     gl_code = ""
+
+                matched_row = None
+                match_note = ""
+                if not r.get("_error") and r.get("date"):
+                    key = (r["date"], round(float(r.get("amount", 0) or 0), 2))
+                    candidates = match_index.get(key, [])
+                    if len(candidates) == 1:
+                        matched_row = candidates.pop(0)
+                    elif len(candidates) > 1:
+                        match_note = f"Ambiguous: {len(candidates)} rows match this date+amount ({candidates}) - pick one"
+                    else:
+                        match_note = "No unfilled row found with this date+amount"
+
                 review_rows.append({
-                    "Include":     not r.get("_error"),
-                    "Source File": r.get("_source_file", ""),
-                    "Date":        r.get("date", ""),
-                    "Amount":      float(r.get("amount", 0) or 0),
-                    "Donor(s)":    donor_text,
-                    "Description": r.get("description", ""),
-                    "GL Code":     gl_code if not r.get("_error") else "",
-                    "Mobile":      r.get("mobile", ""),
-                    "Confidence":  r.get("confidence", ""),
-                    "Notes":       r.get("notes", "") or r.get("_error", ""),
+                    "Include":         not r.get("_error") and matched_row is not None,
+                    "Source File":     r.get("_source_file", ""),
+                    "Date":            r.get("date", ""),
+                    "Amount":          float(r.get("amount", 0) or 0),
+                    "Donor(s)":        donor_text,
+                    "Description":     r.get("description", ""),
+                    "GL Code":         gl_code if not r.get("_error") else "",
+                    "Mobile":          r.get("mobile", ""),
+                    "Target Sheet Row": matched_row,
+                    "Confidence":      r.get("confidence", ""),
+                    "Notes":           r.get("notes", "") or r.get("_error", "") or match_note,
                 })
 
             df_review = pd.DataFrame(review_rows)
@@ -1754,10 +1784,11 @@ with tab_entry:
             edited_review = st.data_editor(
                 df_review,
                 column_config={
-                    "Include":     st.column_config.CheckboxColumn("Include?", default=True),
-                    "Amount":      st.column_config.NumberColumn("Amount (RM)", format="RM %.2f"),
-                    "GL Code":     st.column_config.SelectboxColumn("GL Code", options=[""] + _gl_code_options_entry),
-                    "Source File": st.column_config.TextColumn("Source File", disabled=True),
+                    "Include":          st.column_config.CheckboxColumn("Include?", default=True),
+                    "Amount":           st.column_config.NumberColumn("Amount (RM)", format="RM %.2f"),
+                    "GL Code":          st.column_config.SelectboxColumn("GL Code", options=[""] + _gl_code_options_entry),
+                    "Source File":      st.column_config.TextColumn("Source File", disabled=True),
+                    "Target Sheet Row": st.column_config.NumberColumn("Target Sheet Row", help="Row number in the bank statement tab to fill in", step=1),
                 },
                 use_container_width=True, hide_index=True, num_rows="fixed",
                 key="entry_review_editor",
@@ -1768,29 +1799,32 @@ with tab_entry:
                 st.warning(f"{_low_conf} row(s) have low confidence - please double-check against the slip image before confirming.")
 
             to_confirm = edited_review[edited_review["Include"] == True]
+            _no_row = to_confirm["Target Sheet Row"].isna().sum()
+            to_confirm = to_confirm[to_confirm["Target Sheet Row"].notna()]
+            if _no_row:
+                st.warning(f"{_no_row} ticked row(s) have no Target Sheet Row set - they will be skipped. "
+                           "Fill in the row number to include them.")
+
             if len(to_confirm) and _target_tab:
-                if st.button(f"✅ Add {len(to_confirm)} Confirmed Entries to Google Sheet", type="primary"):
-                    sheet_rows = []
+                if st.button(f"✅ Fill In {len(to_confirm)} Matched Row(s) in Google Sheet", type="primary"):
+                    row_details = {}
                     for _, row in to_confirm.iterrows():
                         donor_cell = row["Donor(s)"]
-                        # Reformat "Name RM50, Name RM38" back into the numbered multi-line
-                        # format the dana list parser expects for multi-donor splitting
                         parts = [p.strip() for p in donor_cell.split(",") if p.strip()]
                         if len(parts) > 1:
                             donor_cell = "\n".join(f"{i+1}) {p}" for i, p in enumerate(parts))
                         elif parts:
                             donor_cell = re.sub(r"\s*RM[\d.,]+$", "", parts[0], flags=re.IGNORECASE)
-                        sheet_rows.append([
-                            row["Date"], row["Description"], "", "", "",
-                            float(row["Amount"]), "", row["GL Code"], row["Description"],
-                            donor_cell, "", row["Mobile"],
-                        ])
+                        row_details[int(row["Target Sheet Row"])] = {
+                            "gl": row["GL Code"], "description": row["Description"],
+                            "donor": donor_cell, "mobile": row["Mobile"],
+                        }
                     try:
-                        gs_append_client = gs_get_client(_gs_cfg_entry["service_account_info"])
-                        from google_sheets_client import append_rows as gs_append_rows
-                        gs_append_rows(gs_append_client, _gs_cfg_entry["spreadsheet_id"], _target_tab, sheet_rows)
-                        st.success(f"Added {len(sheet_rows)} entries to '{_target_tab}'.")
+                        gs_write_client = gs_get_client(_gs_cfg_entry["service_account_info"])
+                        gs_write_donor_details(gs_write_client, _gs_cfg_entry["spreadsheet_id"], _target_tab, row_details)
+                        st.success(f"Filled in {len(row_details)} row(s) in '{_target_tab}' (columns H-L).")
                         del st.session_state["entry_extracted"]
+                        del st.session_state["entry_match_index"]
                     except Exception as e:
                         st.error(f"Could not write to Google Sheet: {e}")
 

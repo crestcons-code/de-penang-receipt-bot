@@ -160,3 +160,61 @@ def append_rows(client: gspread.Client, spreadsheet_id: str, tab_name: str, rows
     sh = client.open_by_key(spreadsheet_id)
     ws = sh.worksheet(tab_name)
     ws.append_rows(rows, value_input_option="USER_ENTERED")
+
+
+def find_unfilled_rows(client: gspread.Client, spreadsheet_id: str, tab_name: str) -> dict:
+    """
+    Build an index of rows in an existing bank-statement tab (columns A-F already
+    filled by push_bank_statement, columns G-L still blank) so slip-extracted
+    donations can be matched to the RIGHT existing row instead of creating a
+    duplicate. Only rows where H (GL), I (description), J (donor), L (mobile) are
+    ALL still blank are considered candidates - already-completed rows are excluded.
+
+    Returns {(date_str, amount): [sheet_row, ...]} - a list per key since more
+    than one transaction can share the same date+amount.
+    """
+    sh = client.open_by_key(spreadsheet_id)
+    ws = sh.worksheet(tab_name)
+    values = ws.get_all_values()
+    index = {}
+    for i, row in enumerate(values[1:], start=2):   # row 1 = header
+        if len(row) < 6:
+            continue
+        date_str = row[0].strip()
+        amount_str = row[5].strip()
+        if not date_str or not amount_str:
+            continue
+        # Columns H, I, J, L (indices 7, 8, 9, 11) must all be blank
+        already_filled = any((row[idx].strip() if idx < len(row) else "") for idx in (7, 8, 9, 11))
+        if already_filled:
+            continue
+        try:
+            amount = round(float(amount_str.replace(",", "")), 2)
+        except ValueError:
+            continue
+        index.setdefault((date_str, amount), []).append(i)
+    return index
+
+
+def write_donor_details(client: gspread.Client, spreadsheet_id: str, tab_name: str,
+                        row_details: dict) -> None:
+    """
+    Write extracted donor details into columns H (GL), I (description), J (donor
+    name), L (WhatsApp mobile) for specific EXISTING rows - matches an already
+    pushed bank statement row instead of creating a new one. Column K (Whatsapp
+    name) and G (Receipts No) are left untouched.
+
+    row_details: {sheet_row_number: {"gl": "...", "description": "...",
+                                     "donor": "...", "mobile": "..."}, ...}
+    """
+    if not row_details:
+        return
+    sh = client.open_by_key(spreadsheet_id)
+    ws = sh.worksheet(tab_name)
+    updates = []
+    for row, d in row_details.items():
+        updates.append({"range": f"H{row}", "values": [[d.get("gl", "")]]})
+        updates.append({"range": f"I{row}", "values": [[d.get("description", "")]]})
+        updates.append({"range": f"J{row}", "values": [[d.get("donor", "")]]})
+        updates.append({"range": f"L{row}", "values": [[d.get("mobile", "")]]})
+    ws.batch_update(updates, value_input_option="USER_ENTERED")
