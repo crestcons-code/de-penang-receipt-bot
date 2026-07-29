@@ -103,18 +103,44 @@ def read_dana_list(client: gspread.Client, spreadsheet_id: str, tab_name: str) -
 
 
 def write_or_numbers(client: gspread.Client, spreadsheet_id: str, tab_name: str,
-                     row_or_map: dict) -> None:
+                     row_or_map: dict) -> dict:
     """
-    Write OR numbers back into column G (Receipts No) for specific rows.
+    Write OR numbers back into column G (Receipts No) for specific rows - but only
+    into cells that are currently BLANK. Rows that already have something in column G
+    are left untouched (could be a genuine pre-existing OR, or a sign the row was
+    already posted under a different number - worth a manual look either way) and
+    are returned instead of being silently overwritten.
+
     row_or_map: {sheet_row_number: "OR-2607123", ...}
-    One batched API call regardless of how many rows are updated.
+    Returns: {sheet_row_number: {"existing": "...", "attempted": "OR-2607123"}, ...}
+             for any row that was SKIPPED because column G wasn't blank.
     """
     if not row_or_map:
-        return
+        return {}
     sh = client.open_by_key(spreadsheet_id)
     ws = sh.worksheet(tab_name)
-    updates = [{"range": f"G{row}", "values": [[or_no]]} for row, or_no in row_or_map.items()]
-    ws.batch_update(updates, value_input_option="USER_ENTERED")
+
+    # Re-check current column G values right before writing, in case the sheet
+    # changed since the dana list was loaded (e.g. a volunteer filled it in meanwhile)
+    rows_sorted = sorted(row_or_map.keys())
+    first_row, last_row = rows_sorted[0], rows_sorted[-1]
+    current_g = ws.get(f"G{first_row}:G{last_row}")
+
+    conflicts = {}
+    updates = []
+    for row, or_no in row_or_map.items():
+        offset = row - first_row
+        existing = ""
+        if offset < len(current_g) and current_g[offset]:
+            existing = str(current_g[offset][0]).strip()
+        if existing:
+            conflicts[row] = {"existing": existing, "attempted": or_no}
+        else:
+            updates.append({"range": f"G{row}", "values": [[or_no]]})
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+    return conflicts
 
 
 def list_tabs(client: gspread.Client, spreadsheet_id: str) -> list:

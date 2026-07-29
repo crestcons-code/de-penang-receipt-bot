@@ -452,9 +452,21 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
             if _row_or_map:
                 try:
                     _wb_client = gs_get_client(_sheet_writeback["service_account_info"])
-                    gs_write_or_numbers(_wb_client, _sheet_writeback["spreadsheet_id"],
-                                        _sheet_writeback["tab_name"], _row_or_map)
-                    st.success(f"Wrote OR number back to column G for {len(_row_or_map)} row(s) in the Google Sheet.")
+                    _conflicts = gs_write_or_numbers(_wb_client, _sheet_writeback["spreadsheet_id"],
+                                                     _sheet_writeback["tab_name"], _row_or_map)
+                    _written = len(_row_or_map) - len(_conflicts)
+                    if _written:
+                        st.success(f"Wrote OR number back to column G for {_written} row(s) in the Google Sheet.")
+                    if _conflicts:
+                        st.warning(f"⚠️ {len(_conflicts)} row(s) already had an OR number in column G - "
+                                   "NOT overwritten. This may mean a duplicate OR or the row was already handled. Please review:")
+                        st.dataframe(
+                            pd.DataFrame([
+                                {"Sheet Row": row, "Existing OR in Sheet": c["existing"], "Just-Posted OR": c["attempted"]}
+                                for row, c in _conflicts.items()
+                            ]),
+                            use_container_width=True, hide_index=True,
+                        )
                 except Exception as e:
                     st.warning(f"Posted successfully, but could not write OR numbers back to the Google Sheet: {e}")
 
