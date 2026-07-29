@@ -1678,17 +1678,21 @@ with tab_entry:
 
         st.divider()
         uploaded_slips = st.file_uploader(
-            "Upload slip images (select multiple at once)",
-            type=["png", "jpg", "jpeg"], accept_multiple_files=True, key="slip_uploads",
+            "Upload slip images or PDFs (select multiple at once)",
+            type=["png", "jpg", "jpeg", "pdf"], accept_multiple_files=True, key="slip_uploads",
         )
 
         if uploaded_slips:
-            st.caption(f"{len(uploaded_slips)} image(s) uploaded. Paste each donor's WhatsApp text below its slip.")
+            st.caption(f"{len(uploaded_slips)} file(s) uploaded. Paste each donor's WhatsApp text below its slip.")
             wa_texts = []
             for i, slip in enumerate(uploaded_slips):
                 col_img, col_txt = st.columns([1, 2])
                 with col_img:
-                    st.image(slip, caption=slip.name, use_container_width=True)
+                    if slip.name.lower().endswith(".pdf"):
+                        st.markdown(f"📄 **{slip.name}**")
+                        st.caption("PDF file (preview not shown, will still be read by AI)")
+                    else:
+                        st.image(slip, caption=slip.name, use_container_width=True)
                 with col_txt:
                     txt = st.text_area(f"WhatsApp text for slip {i+1}", key=f"slip_wa_text_{i}", height=150,
                                        placeholder="Paste the donor's WhatsApp message here (names, purpose, etc.)")
@@ -1701,7 +1705,13 @@ with tab_entry:
                 for i, (slip, txt) in enumerate(zip(uploaded_slips, wa_texts)):
                     try:
                         img_bytes = slip.getvalue()
-                        media_type = "image/png" if slip.name.lower().endswith(".png") else "image/jpeg"
+                        _name_lower = slip.name.lower()
+                        if _name_lower.endswith(".pdf"):
+                            media_type = "application/pdf"
+                        elif _name_lower.endswith(".png"):
+                            media_type = "image/png"
+                        else:
+                            media_type = "image/jpeg"
                         result = extract_donation(_api_key, img_bytes, media_type, txt)
                         result["_source_file"] = slip.name
                         result["_error"] = ""

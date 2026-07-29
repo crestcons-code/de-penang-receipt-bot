@@ -9,8 +9,10 @@ import anthropic
 MODEL = "claude-haiku-4-5-20251001"
 
 EXTRACTION_PROMPT = """You are helping a Malaysian Buddhist temple's accounts team process donation \
-records. You are given a bank transfer ("bank-in") slip image and the WhatsApp message text the \
-donor sent alongside it (donor name(s), purpose, sometimes multiple donors sharing one transfer).
+records. You are given a bank transfer ("bank-in") slip (image or PDF, from any Malaysian bank - \
+Maybank, Hong Leong, Public Bank, CIMB etc. all use different layouts) and the WhatsApp message \
+text the donor sent alongside it (donor name(s), purpose, sometimes multiple donors sharing one \
+transfer).
 
 Extract the following and return ONLY a single JSON object, no other text:
 
@@ -25,17 +27,22 @@ Extract the following and return ONLY a single JSON object, no other text:
                                                  // 2. Lim Ah Lian RM50"), split them out here -
                                                  // amounts must sum to the total "amount" above.
   ],
-  "description": "purpose/reason for donation if mentioned (e.g. Kathina, Paritta, TCM, General)",
+  "description": "purpose/reason for donation, INCLUDING any group/reference code shown on the
+                   slip such as 'Recipient Reference' or 'Payment Details' (e.g. slip shows
+                   'RC G17 BML Kathina' and 'road construction' -> description should be
+                   'Kathina - Road Construction RC G17', preserving the RC G### code verbatim -
+                   these group codes identify which donor group a Forest Monastery donation
+                   belongs to and MUST NOT be dropped)",
   "mobile": "012-3456789 or empty string if not stated",
   "confidence": "high|medium|low",   // your confidence that date+amount were read correctly
   "notes": "anything unclear or that needs human review, empty string if none"
 }
 
-If the slip image is blurry/unclear on date or amount, still give your best reading and set
+If the slip is blurry/unclear on date or amount, still give your best reading and set
 confidence to "low" and explain in notes. If the WhatsApp text gives a donor name but the slip
 shows a different name (e.g. slip shows the payer's bank name, WhatsApp gives the actual donor),
-prefer the WhatsApp-stated donor name for "donors" - the bank name alone belongs in the slip
-image's sender, not necessarily the donor being credited.
+prefer the WhatsApp-stated donor name for "donors" - the bank name alone belongs in the slip's
+sender field, not necessarily the donor being credited.
 """
 
 
@@ -43,14 +50,16 @@ def _get_client(api_key: str) -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=api_key)
 
 
-def extract_donation(api_key: str, image_bytes: bytes, image_media_type: str,
+def extract_donation(api_key: str, file_bytes: bytes, media_type: str,
                      whatsapp_text: str) -> dict:
     """
-    Call Claude to read one slip image + its paired WhatsApp text.
+    Call Claude to read one slip (image or PDF) + its paired WhatsApp text.
+    media_type: "image/jpeg", "image/png", or "application/pdf".
     Returns the parsed dict (see EXTRACTION_PROMPT for shape), or raises on failure.
     """
     client = _get_client(api_key)
-    image_b64 = base64.b64encode(image_bytes).decode()
+    file_b64 = base64.b64encode(file_bytes).decode()
+    block_type = "document" if media_type == "application/pdf" else "image"
 
     message = client.messages.create(
         model=MODEL,
@@ -59,8 +68,8 @@ def extract_donation(api_key: str, image_bytes: bytes, image_media_type: str,
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": image_media_type,
-                                                 "data": image_b64}},
+                    {"type": block_type, "source": {"type": "base64", "media_type": media_type,
+                                                     "data": file_b64}},
                     {"type": "text", "text": f"WhatsApp message text from donor:\n{whatsapp_text or '(none provided)'}\n\n{EXTRACTION_PROMPT}"},
                 ],
             }
