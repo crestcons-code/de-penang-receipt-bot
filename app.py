@@ -571,9 +571,8 @@ with tab_bank:
                        "for volunteers to fill in donor names/GL codes as WhatsApp messages come in.")
             _gs_cfg = get_google_sheets_config()
             if not _gs_cfg.get("service_account_info") or not _gs_cfg.get("spreadsheet_id"):
-                st.info(f"Google Sheets isn't set up yet. "
-                        f"[debug: service_account_info={'OK' if _gs_cfg.get('service_account_info') else 'MISSING'}, "
-                        f"spreadsheet_id={_gs_cfg.get('spreadsheet_id') or 'MISSING'}]")
+                st.info("Google Sheets isn't set up yet. Ask your developer to configure the service "
+                        "account credentials and spreadsheet ID.")
             else:
                 _default_tab = df_raw["date"].min().strftime("%b%Y")
                 _tab_name = st.text_input("Sheet tab name", value=_default_tab, key="push_tab_name")
@@ -1474,11 +1473,46 @@ with tab_print:
                 except Exception as e:
                     st.error(f"Could not reach Autocount right now: {e}\n\nPlease wait a moment and try again.")
 
-    # Optional: upload the dana list to add WhatsApp numbers (not stored in Autocount)
-    print_dana_file = st.file_uploader(
-        "Optional: upload Dana List Excel to include WhatsApp numbers",
-        type=["xlsx"], key="print_dana_upload",
-    )
+    # Optional: bring in the dana list to add WhatsApp numbers (not stored in Autocount)
+    with st.expander("📱 Include WhatsApp numbers (optional)"):
+        wa_source = st.radio("Source:", ["Upload Excel", "Load from Google Sheet"], horizontal=True, key="wa_source")
+
+        df_pd_for_wa = None
+        if wa_source == "Upload Excel":
+            print_dana_file = st.file_uploader(
+                "Upload Dana List Excel to include WhatsApp numbers",
+                type=["xlsx"], key="print_dana_upload",
+            )
+            if print_dana_file:
+                try:
+                    df_pd_for_wa, _ = load_dana_list(print_dana_file, skip_blank_gl=False)
+                except Exception as e:
+                    st.warning(f"Could not read dana list: {e}")
+        else:
+            _gs_cfg = get_google_sheets_config()
+            if not _gs_cfg.get("service_account_info") or not _gs_cfg.get("spreadsheet_id"):
+                st.info("Google Sheets isn't set up yet. Ask your developer to configure the service "
+                        "account credentials and spreadsheet ID.")
+            else:
+                try:
+                    gs_client_wa = gs_get_client(_gs_cfg["service_account_info"])
+                    wa_tabs = gs_list_tabs(gs_client_wa, _gs_cfg["spreadsheet_id"])
+                except Exception as e:
+                    st.error(f"Could not connect to Google Sheets: {e}")
+                    wa_tabs = []
+                if wa_tabs:
+                    wa_tab = st.selectbox("Select sheet tab", wa_tabs, key="wa_sheet_tab")
+                    if st.button("📥 Load for WhatsApp numbers", key="wa_load_btn"):
+                        try:
+                            with st.spinner("Reading dana list from Google Sheets..."):
+                                df_raw_wa = gs_read_dana_list(gs_client_wa, _gs_cfg["spreadsheet_id"], wa_tab)
+                                df_pd_for_wa, _ = _parse_dana_dataframe(df_raw_wa, skip_blank_gl=False)
+                            st.session_state["wa_dana_from_sheet"] = df_pd_for_wa
+                            st.success(f"Loaded {len(df_pd_for_wa)} row(s) from '{wa_tab}'.")
+                        except Exception as e:
+                            st.error(f"Could not read dana list from Google Sheet: {e}")
+                    elif "wa_dana_from_sheet" in st.session_state:
+                        df_pd_for_wa = st.session_state["wa_dana_from_sheet"]
 
     if "print_lookup_results" in st.session_state:
         lookup_results = st.session_state["print_lookup_results"]
@@ -1492,9 +1526,9 @@ with tab_print:
 
             # Join WhatsApp numbers from the dana list by OR number (suffixed ORs
             # like OR-2606153-1 fall back to their base number OR-2606153)
-            if print_dana_file:
+            if df_pd_for_wa is not None:
                 try:
-                    df_pd, _ = load_dana_list(print_dana_file, skip_blank_gl=False)
+                    df_pd = df_pd_for_wa
                     import re as _re5
 
                     # Primary: match by OR number (column G of the dana list)
