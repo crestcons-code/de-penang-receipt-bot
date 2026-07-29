@@ -5,6 +5,7 @@ import sys, io, re, time, json
 import streamlit as st
 import pandas as pd
 import streamlit_authenticator as stauth
+from rapidfuzz import fuzz
 
 sys.path.insert(0, '.')
 from parse_maybank import load_statement
@@ -1759,9 +1760,27 @@ with tab_entry:
                     key = (r["date"], round(float(r.get("amount", 0) or 0), 2))
                     candidates = match_index.get(key, [])
                     if len(candidates) == 1:
-                        matched_row = candidates.pop(0)
+                        matched_row = candidates.pop(0)["row"]
                     elif len(candidates) > 1:
-                        match_note = f"Ambiguous: {len(candidates)} rows match this date+amount ({candidates}) - pick one"
+                        # Multiple rows share this date+amount - disambiguate by fuzzy-matching
+                        # the extracted donor name(s) against each candidate's own
+                        # description/beneficiary text (which almost always differs even
+                        # when the date+amount collide, since it's tied to the actual sender).
+                        donor_query = " ".join(d.get("name", "") for d in donors) or donor_text
+                        scored = []
+                        for c in candidates:
+                            haystack = f"{c['desc1']} {c['desc2']} {c['beneficiary']}"
+                            score = fuzz.WRatio(donor_query, haystack) if donor_query and haystack.strip() else 0
+                            scored.append((score, c))
+                        scored.sort(key=lambda x: x[0], reverse=True)
+                        best_score, best_c = scored[0]
+                        second_score = scored[1][0] if len(scored) > 1 else 0
+                        if best_score >= 60 and (best_score - second_score) >= 10:
+                            matched_row = best_c["row"]
+                            match_note = f"Auto-picked row {matched_row} by donor name match (score {best_score:.0f}) among {len(candidates)} same date+amount rows - please verify"
+                        else:
+                            cand_desc = "; ".join(f"row {c['row']}: {c['beneficiary'] or c['desc2'] or c['desc1']}" for c in candidates)
+                            match_note = f"Ambiguous: {len(candidates)} rows match this date+amount - {cand_desc} - pick one"
                     else:
                         match_note = "No unfilled row found with this date+amount"
 

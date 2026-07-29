@@ -170,8 +170,10 @@ def find_unfilled_rows(client: gspread.Client, spreadsheet_id: str, tab_name: st
     duplicate. Only rows where H (GL), I (description), J (donor), L (mobile) are
     ALL still blank are considered candidates - already-completed rows are excluded.
 
-    Returns {(date_str, amount): [sheet_row, ...]} - a list per key since more
-    than one transaction can share the same date+amount.
+    Returns {(date_str, amount): [{"row": int, "desc1": str, "desc2": str,
+    "beneficiary": str}, ...]} - a list per key since more than one transaction
+    can share the same date+amount. The text fields let a caller disambiguate
+    by fuzzy-matching against a known donor name when there are multiple candidates.
     """
     import re as _re
     sh = client.open_by_key(spreadsheet_id)
@@ -203,7 +205,12 @@ def find_unfilled_rows(client: gspread.Client, spreadsheet_id: str, tab_name: st
             amount = round(float(cleaned), 2)
         except ValueError:
             continue
-        index.setdefault((date_str, amount), []).append(i)
+        index.setdefault((date_str, amount), []).append({
+            "row": i,
+            "desc1": row[1].strip() if len(row) > 1 else "",
+            "desc2": row[2].strip() if len(row) > 2 else "",
+            "beneficiary": row[3].strip() if len(row) > 3 else "",
+        })
     return index
 
 
