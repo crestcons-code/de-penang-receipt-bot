@@ -236,3 +236,38 @@ def write_donor_details(client: gspread.Client, spreadsheet_id: str, tab_name: s
         updates.append({"range": f"J{row}", "values": [[d.get("donor", "")]]})
         updates.append({"range": f"L{row}", "values": [[d.get("mobile", "")]]})
     ws.batch_update(updates, value_input_option="USER_ENTERED")
+
+
+def build_donor_phone_book(client: gspread.Client, spreadsheet_id: str,
+                           exclude_tab: str = None) -> list:
+    """
+    Scan all monthly tabs (named as 6-digit YYYYMM, e.g. "202607") for donor name
+    (column J) + WhatsApp mobile (column L) pairs, so a new donor's number can be
+    suggested by fuzzy-matching their name against past months' records - useful
+    when this month's WhatsApp text didn't include a phone number but the same
+    donor gave one in a previous month.
+
+    exclude_tab: skip this tab (typically the tab currently being worked on).
+    Later (more recent) months overwrite earlier ones for the same donor text,
+    so the most recently used number wins.
+
+    Returns a list of (donor_name_text, mobile) tuples, most recent per unique
+    donor text, ready for rapidfuzz.process.extractOne matching.
+    """
+    import re as _re
+    sh = client.open_by_key(spreadsheet_id)
+    month_tabs = sorted(
+        (ws.title for ws in sh.worksheets() if _re.fullmatch(r"\d{6}", ws.title) and ws.title != exclude_tab)
+    )
+    phone_by_donor = {}
+    for tab in month_tabs:
+        ws = sh.worksheet(tab)
+        values = ws.get_all_values()
+        for row in values[1:]:
+            if len(row) < 12:
+                continue
+            donor = row[9].strip()
+            mobile = row[11].strip()
+            if donor and mobile:
+                phone_by_donor[donor] = mobile   # later tabs overwrite earlier ones
+    return list(phone_by_donor.items())

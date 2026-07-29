@@ -5,7 +5,7 @@ import sys, io, re, time, json
 import streamlit as st
 import pandas as pd
 import streamlit_authenticator as stauth
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
 
 sys.path.insert(0, '.')
 from parse_maybank import load_statement
@@ -1666,6 +1666,7 @@ with tab_entry:
             st.stop()
         from google_sheets_client import find_unfilled_rows as gs_find_unfilled_rows
         from google_sheets_client import write_donor_details as gs_write_donor_details
+        from google_sheets_client import build_donor_phone_book as gs_build_phone_book
 
         _gs_cfg_entry = get_google_sheets_config()
         _target_tab = None
@@ -1679,6 +1680,22 @@ with tab_entry:
         else:
             st.warning("Google Sheets isn't set up - this feature needs it to match slips against "
                        "existing bank statement rows.")
+
+        if _target_tab:
+            _pb_col1, _pb_col2 = st.columns([3, 1])
+            with _pb_col1:
+                _pb_size = len(st.session_state.get("entry_phone_book", []))
+                if _pb_size:
+                    st.caption(f"📞 Donor phone lookup ready ({_pb_size} known donors from past months).")
+                else:
+                    st.caption("📞 Donor phone lookup not loaded yet - will build automatically on first batch.")
+            with _pb_col2:
+                if st.button("🔄 Refresh phone lookup", key="refresh_phone_book_btn"):
+                    with st.spinner("Scanning past months for donor phone numbers..."):
+                        st.session_state["entry_phone_book"] = gs_build_phone_book(
+                            gs_get_client(_gs_cfg_entry["service_account_info"]),
+                            _gs_cfg_entry["spreadsheet_id"], exclude_tab=_target_tab)
+                    st.rerun()
 
         st.divider()
         uploaded_slips = st.file_uploader(
@@ -1704,6 +1721,13 @@ with tab_entry:
                 st.divider()
 
             if st.button(f"🔍 Process Batch ({len(uploaded_slips)} slip(s))", type="primary", disabled=not _target_tab):
+                if "entry_phone_book" not in st.session_state:
+                    with st.spinner("Building donor phone lookup from past months..."):
+                        st.session_state["entry_phone_book"] = gs_build_phone_book(
+                            _entry_client, _gs_cfg_entry["spreadsheet_id"], exclude_tab=_target_tab)
+                phone_book = st.session_state["entry_phone_book"]
+                phone_choices = [p[0] for p in phone_book]
+
                 extracted = []
                 progress = st.progress(0)
                 for i, (slip, txt) in enumerate(zip(uploaded_slips, wa_texts)):
@@ -1719,6 +1743,23 @@ with tab_entry:
                         result = extract_donation(_api_key, img_bytes, media_type, txt)
                         result["_source_file"] = slip.name
                         result["_error"] = ""
+                        # If no mobile was found in the WhatsApp text, look up the
+                        # donor against past months' records - the same person often
+                        # donates repeatedly and their number is likely on file already
+                        if not result.get("mobile") and phone_choices:
+                            donor_names = [d.get("name", "") for d in result.get("donors", []) if d.get("name")]
+                            for dn in donor_names:
+                                # High cutoff deliberately - a wrong phone suggestion is worse
+                                # than no suggestion (tested: 85 gave false positives on
+                                # unrelated names sharing a common word; 92 only fires on
+                                # near-exact/exact name matches)
+                                match = process.extractOne(dn, phone_choices, scorer=fuzz.WRatio, score_cutoff=92)
+                                if match:
+                                    matched_text, score, m_idx = match
+                                    result["mobile"] = phone_book[m_idx][1]
+                                    result["notes"] = (result.get("notes", "") + " | " if result.get("notes") else "") + \
+                                        f"Mobile suggested from past donor record '{matched_text}' (score {score:.0f}) - please verify"
+                                    break
                     except Exception as e:
                         result = {"date": "", "amount": 0.0, "donors": [], "description": "",
                                   "mobile": "", "confidence": "low", "notes": "",
