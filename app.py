@@ -5,7 +5,7 @@ import sys, io, re, time, json
 import streamlit as st
 import pandas as pd
 import streamlit_authenticator as stauth
-from rapidfuzz import fuzz, process
+from rapidfuzz import fuzz, process, utils as fuzz_utils
 
 sys.path.insert(0, '.')
 from parse_maybank import load_statement
@@ -1752,8 +1752,11 @@ with tab_entry:
                                 # High cutoff deliberately - a wrong phone suggestion is worse
                                 # than no suggestion (tested: 85 gave false positives on
                                 # unrelated names sharing a common word; 92 only fires on
-                                # near-exact/exact name matches)
-                                match = process.extractOne(dn, phone_choices, scorer=fuzz.WRatio, score_cutoff=92)
+                                # near-exact/exact name matches). processor=default_process
+                                # is REQUIRED - without it, case differences alone (e.g.
+                                # "Lim Poh Tee" vs "LIM POH TEE") tank the score to ~45.
+                                match = process.extractOne(dn, phone_choices, scorer=fuzz.WRatio,
+                                                           processor=fuzz_utils.default_process, score_cutoff=92)
                                 if match:
                                     matched_text, score, m_idx = match
                                     result["mobile"] = phone_book[m_idx][1]
@@ -1811,7 +1814,11 @@ with tab_entry:
                         scored = []
                         for c in candidates:
                             haystack = f"{c['desc1']} {c['desc2']} {c['beneficiary']}"
-                            score = fuzz.WRatio(donor_query, haystack) if donor_query and haystack.strip() else 0
+                            # processor=default_process is REQUIRED for case-insensitive
+                            # matching (e.g. donor name vs ALL-CAPS bank text) - without it,
+                            # case differences alone tank scores to near-random levels
+                            score = fuzz.WRatio(donor_query, haystack, processor=fuzz_utils.default_process) \
+                                    if donor_query and haystack.strip() else 0
                             scored.append((score, c))
                         scored.sort(key=lambda x: x[0], reverse=True)
                         best_score, best_c = scored[0]
