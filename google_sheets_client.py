@@ -173,6 +173,7 @@ def find_unfilled_rows(client: gspread.Client, spreadsheet_id: str, tab_name: st
     Returns {(date_str, amount): [sheet_row, ...]} - a list per key since more
     than one transaction can share the same date+amount.
     """
+    import re as _re
     sh = client.open_by_key(spreadsheet_id)
     ws = sh.worksheet(tab_name)
     values = ws.get_all_values()
@@ -180,16 +181,26 @@ def find_unfilled_rows(client: gspread.Client, spreadsheet_id: str, tab_name: st
     for i, row in enumerate(values[1:], start=2):   # row 1 = header
         if len(row) < 6:
             continue
-        date_str = row[0].strip()
-        amount_str = row[5].strip()
-        if not date_str or not amount_str:
+        date_raw = row[0].strip()
+        amount_raw = row[5].strip()
+        if not date_raw or not amount_raw:
             continue
         # Columns H, I, J, L (indices 7, 8, 9, 11) must all be blank
         already_filled = any((row[idx].strip() if idx < len(row) else "") for idx in (7, 8, 9, 11))
         if already_filled:
             continue
+        # Dates may be ISO ("2026-07-28", from push_bank_statement) or the sheet's
+        # native "28 Jul 2026" text format - normalize both to YYYY-MM-DD
         try:
-            amount = round(float(amount_str.replace(",", "")), 2)
+            date_str = pd.to_datetime(date_raw).strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+        # Amounts may be a bare number or "RM 288.00" - strip everything but digits/dot
+        cleaned = _re.sub(r"[^\d.]", "", amount_raw)
+        if not cleaned or cleaned == ".":
+            continue
+        try:
+            amount = round(float(cleaned), 2)
         except ValueError:
             continue
         index.setdefault((date_str, amount), []).append(i)
