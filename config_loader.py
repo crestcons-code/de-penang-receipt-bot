@@ -60,6 +60,26 @@ def get_google_sheets_config():
         return {"service_account_info": None, "spreadsheet_id": None}
 
 
+def get_anthropic_api_key():
+    """
+    Returns the Anthropic API key string, or None if not configured yet.
+    On Streamlit Cloud: reads st.secrets["ANTHROPIC_API_KEY"].
+    Locally: reads ANTHROPIC_API_KEY from config.py.
+    """
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and "ANTHROPIC_API_KEY" in st.secrets:
+            return st.secrets["ANTHROPIC_API_KEY"]
+    except Exception:
+        pass
+
+    try:
+        from config import ANTHROPIC_API_KEY
+        return ANTHROPIC_API_KEY
+    except Exception:
+        return None
+
+
 _cfg = get_config()
 AUTOCOUNT = _cfg["AUTOCOUNT"]
 DEFAULT_PAYMENT_METHOD = _cfg["DEFAULT_PAYMENT_METHOD"]

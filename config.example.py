@@ -21,3 +21,7 @@ GOOGLE_SHEETS = {
     "service_account_json_path": "google_service_account.json",
     "spreadsheet_id": "your-spreadsheet-id-here",
 }
+
+# Optional: Anthropic API key for the AI slip-reading Dana Entry feature.
+# Get one from https://console.anthropic.com (Settings > API Keys).
+ANTHROPIC_API_KEY = "sk-ant-your-key-here"

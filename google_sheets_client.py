@@ -147,3 +147,16 @@ def list_tabs(client: gspread.Client, spreadsheet_id: str) -> list:
     """Return the names of all worksheet tabs in the spreadsheet, for a tab picker."""
     sh = client.open_by_key(spreadsheet_id)
     return [ws.title for ws in sh.worksheets()]
+
+
+def append_rows(client: gspread.Client, spreadsheet_id: str, tab_name: str, rows: list) -> None:
+    """
+    Append new dana list rows to the end of an existing tab (e.g. entries confirmed
+    from the AI slip-reading workflow). rows: list of 12-value lists matching
+    DANA_LIST_HEADERS order. Does not touch any existing rows.
+    """
+    if not rows:
+        return
+    sh = client.open_by_key(spreadsheet_id)
+    ws = sh.worksheet(tab_name)
+    ws.append_rows(rows, value_input_option="USER_ENTERED")

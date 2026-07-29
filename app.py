@@ -10,7 +10,7 @@ sys.path.insert(0, '.')
 from parse_maybank import load_statement
 from donation_mapping import map_to_gl, DONATION_MAP, get_department, GL_DEPARTMENT
 from autocount_api import AutocountClient
-from config_loader import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD, get_google_sheets_config
+from config_loader import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD, get_google_sheets_config, get_anthropic_api_key
 from google_sheets_client import (
     get_client as gs_get_client,
     push_bank_statement as gs_push_bank_statement,
@@ -566,7 +566,7 @@ st.markdown('<h1 style="color:#2563eb;">DE Penang Autocount Donation Receipts Ap
 st.caption("Persatuan Dhamma Malaysia (Malaysia Dhamma Society - Penang Branch)")
 st.divider()
 
-_tabs = ["Upload Bank Statement (CSV/PDF)", "Upload Dana List (Excel)", "Reconciliation", "Print Batch OR"]
+_tabs = ["Upload Bank Statement (CSV/PDF)", "Upload Dana List (Excel)", "Reconciliation", "Print Batch OR", "📷 Dana Entry (Beta)"]
 if _current_role == "admin":
     _tabs.append("Admin — Manage Users")
 _tab_objs = st.tabs(_tabs)
@@ -574,7 +574,8 @@ tab_bank  = _tab_objs[0]
 tab_dana  = _tab_objs[1]
 tab_recon = _tab_objs[2]
 tab_print = _tab_objs[3]
-tab_admin = _tab_objs[4] if _current_role == "admin" else None
+tab_entry = _tab_objs[4]
+tab_admin = _tab_objs[5] if _current_role == "admin" else None
 
 # ==============================================
 # TAB 1 - Bank Statement
@@ -1642,6 +1643,146 @@ Follow these steps in **Autocount Cloud** to print and save these receipts as on
                         value=or_list_text, height=150)
             st.download_button("Download OR Number List (.txt)", or_list_text,
                                file_name="or_numbers_to_print.txt", mime="text/plain")
+
+# ==============================================
+# TAB - Dana Entry (Beta): AI-assisted slip + WhatsApp text batch entry
+# ==============================================
+with tab_entry:
+    st.subheader("📷 Dana Entry — Slip + WhatsApp Text (Beta)")
+    st.caption("Upload a batch of bank-in slip screenshots, paste each donor's WhatsApp message, "
+               "and let AI propose the donation details. You review and confirm before anything "
+               "is added to the dana list.")
+
+    _api_key = get_anthropic_api_key()
+    if not _api_key:
+        st.info("This feature isn't set up yet. Ask your developer to configure the Anthropic API key.")
+    else:
+        try:
+            from slip_extractor import extract_donation
+        except ImportError as e:
+            st.error(f"Could not load the AI extraction module: {e}")
+            st.stop()
+
+        _gs_cfg_entry = get_google_sheets_config()
+        _target_tab = None
+        if _gs_cfg_entry.get("service_account_info") and _gs_cfg_entry.get("spreadsheet_id"):
+            try:
+                _entry_client = gs_get_client(_gs_cfg_entry["service_account_info"])
+                _entry_tabs = gs_list_tabs(_entry_client, _gs_cfg_entry["spreadsheet_id"])
+                _target_tab = st.selectbox("Add confirmed entries to sheet tab:", _entry_tabs, key="entry_target_tab")
+            except Exception as e:
+                st.warning(f"Could not connect to Google Sheets: {e}")
+        else:
+            st.warning("Google Sheets isn't set up - confirmed entries can still be reviewed and "
+                       "downloaded, just not written to a sheet automatically.")
+
+        st.divider()
+        uploaded_slips = st.file_uploader(
+            "Upload slip images (select multiple at once)",
+            type=["png", "jpg", "jpeg"], accept_multiple_files=True, key="slip_uploads",
+        )
+
+        if uploaded_slips:
+            st.caption(f"{len(uploaded_slips)} image(s) uploaded. Paste each donor's WhatsApp text below its slip.")
+            wa_texts = []
+            for i, slip in enumerate(uploaded_slips):
+                col_img, col_txt = st.columns([1, 2])
+                with col_img:
+                    st.image(slip, caption=slip.name, use_container_width=True)
+                with col_txt:
+                    txt = st.text_area(f"WhatsApp text for slip {i+1}", key=f"slip_wa_text_{i}", height=150,
+                                       placeholder="Paste the donor's WhatsApp message here (names, purpose, etc.)")
+                    wa_texts.append(txt)
+                st.divider()
+
+            if st.button(f"🔍 Process Batch ({len(uploaded_slips)} slip(s))", type="primary"):
+                extracted = []
+                progress = st.progress(0)
+                for i, (slip, txt) in enumerate(zip(uploaded_slips, wa_texts)):
+                    try:
+                        img_bytes = slip.getvalue()
+                        media_type = "image/png" if slip.name.lower().endswith(".png") else "image/jpeg"
+                        result = extract_donation(_api_key, img_bytes, media_type, txt)
+                        result["_source_file"] = slip.name
+                        result["_error"] = ""
+                    except Exception as e:
+                        result = {"date": "", "amount": 0.0, "donors": [], "description": "",
+                                  "mobile": "", "confidence": "low", "notes": "",
+                                  "_source_file": slip.name, "_error": str(e)}
+                    extracted.append(result)
+                    progress.progress((i + 1) / len(uploaded_slips))
+                st.session_state["entry_extracted"] = extracted
+
+        if "entry_extracted" in st.session_state:
+            extracted = st.session_state["entry_extracted"]
+            st.divider()
+            st.subheader("Review & Confirm")
+
+            review_rows = []
+            for r in extracted:
+                donors = r.get("donors", [])
+                donor_text = ", ".join(f"{d.get('name','')} RM{d.get('amount',0):.0f}" for d in donors) if donors else ""
+                if r.get("description") and not r.get("_error"):
+                    gl_code, _, _ = map_to_gl(r["description"])
+                else:
+                    gl_code = ""
+                review_rows.append({
+                    "Include":     not r.get("_error"),
+                    "Source File": r.get("_source_file", ""),
+                    "Date":        r.get("date", ""),
+                    "Amount":      float(r.get("amount", 0) or 0),
+                    "Donor(s)":    donor_text,
+                    "Description": r.get("description", ""),
+                    "GL Code":     gl_code if not r.get("_error") else "",
+                    "Mobile":      r.get("mobile", ""),
+                    "Confidence":  r.get("confidence", ""),
+                    "Notes":       r.get("notes", "") or r.get("_error", ""),
+                })
+
+            df_review = pd.DataFrame(review_rows)
+            _gl_code_options_entry = sorted({c for c, _, _ in DONATION_MAP})
+            edited_review = st.data_editor(
+                df_review,
+                column_config={
+                    "Include":     st.column_config.CheckboxColumn("Include?", default=True),
+                    "Amount":      st.column_config.NumberColumn("Amount (RM)", format="RM %.2f"),
+                    "GL Code":     st.column_config.SelectboxColumn("GL Code", options=[""] + _gl_code_options_entry),
+                    "Source File": st.column_config.TextColumn("Source File", disabled=True),
+                },
+                use_container_width=True, hide_index=True, num_rows="fixed",
+                key="entry_review_editor",
+            )
+
+            _low_conf = (edited_review["Confidence"] == "low").sum()
+            if _low_conf:
+                st.warning(f"{_low_conf} row(s) have low confidence - please double-check against the slip image before confirming.")
+
+            to_confirm = edited_review[edited_review["Include"] == True]
+            if len(to_confirm) and _target_tab:
+                if st.button(f"✅ Add {len(to_confirm)} Confirmed Entries to Google Sheet", type="primary"):
+                    sheet_rows = []
+                    for _, row in to_confirm.iterrows():
+                        donor_cell = row["Donor(s)"]
+                        # Reformat "Name RM50, Name RM38" back into the numbered multi-line
+                        # format the dana list parser expects for multi-donor splitting
+                        parts = [p.strip() for p in donor_cell.split(",") if p.strip()]
+                        if len(parts) > 1:
+                            donor_cell = "\n".join(f"{i+1}) {p}" for i, p in enumerate(parts))
+                        elif parts:
+                            donor_cell = re.sub(r"\s*RM[\d.,]+$", "", parts[0], flags=re.IGNORECASE)
+                        sheet_rows.append([
+                            row["Date"], row["Description"], "", "", "",
+                            float(row["Amount"]), "", row["GL Code"], row["Description"],
+                            donor_cell, "", row["Mobile"],
+                        ])
+                    try:
+                        gs_append_client = gs_get_client(_gs_cfg_entry["service_account_info"])
+                        from google_sheets_client import append_rows as gs_append_rows
+                        gs_append_rows(gs_append_client, _gs_cfg_entry["spreadsheet_id"], _target_tab, sheet_rows)
+                        st.success(f"Added {len(sheet_rows)} entries to '{_target_tab}'.")
+                        del st.session_state["entry_extracted"]
+                    except Exception as e:
+                        st.error(f"Could not write to Google Sheet: {e}")
 
 # ==============================================
 # TAB 4 - Admin: Manage Users (admin only)
