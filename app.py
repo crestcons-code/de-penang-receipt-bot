@@ -444,7 +444,10 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
               delta=f"{total_all - total_sel:,.2f} excluded" if total_all != total_sel else None)
 
     if len(to_post):
-        with st.expander(f"Preview: OR numbers that will be posted ({len(to_post)})"):
+        st.info("ℹ️ The **OR Number column in the table above** shows the originally proposed numbers "
+                "and doesn't visually update when you untick a row. The table below shows the **actual "
+                "renumbered values** that will be posted (gaps from unticked rows are closed automatically).")
+        with st.expander(f"✅ Final OR numbers to be posted ({len(to_post)})", expanded=True):
             st.dataframe(to_post[["OR Number", "Donor Name", "Amount (RM)"]],
                         use_container_width=True, hide_index=True)
 
