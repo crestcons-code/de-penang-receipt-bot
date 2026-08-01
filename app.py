@@ -1800,17 +1800,34 @@ with tab_entry:
 
                 matched_row = None
                 match_note = ""
+                donor_query = " ".join(d.get("name", "") for d in donors) or donor_text
                 if not r.get("_error") and r.get("date"):
                     key = (r["date"], round(float(r.get("amount", 0) or 0), 2))
                     candidates = match_index.get(key, [])
                     if len(candidates) == 1:
-                        matched_row = candidates.pop(0)["row"]
+                        # Even with only one candidate, sanity-check the donor name
+                        # against its own bank description before trusting it blindly -
+                        # a "sole remaining unfilled row" can still belong to a DIFFERENT
+                        # donor whose own transaction just hasn't been processed yet
+                        # (e.g. if another row at this date+amount was already filled in
+                        # a previous run, the last unfilled one isn't automatically this
+                        # slip's match).
+                        only_c = candidates[0]
+                        haystack = f"{only_c['desc1']} {only_c['desc2']} {only_c['beneficiary']}"
+                        sanity_score = fuzz.WRatio(donor_query, haystack, processor=fuzz_utils.default_process) \
+                                       if donor_query and haystack.strip() else 0
+                        if sanity_score >= 50:
+                            matched_row = candidates.pop(0)["row"]
+                        else:
+                            match_note = (f"1 unfilled row found (row {only_c['row']}) but its bank description "
+                                          f"({only_c['beneficiary'] or only_c['desc2'] or only_c['desc1']!r}) doesn't "
+                                          f"resemble the donor name (score {sanity_score:.0f}) - likely belongs to a "
+                                          "different donor. Please verify manually before setting Target Sheet Row.")
                     elif len(candidates) > 1:
                         # Multiple rows share this date+amount - disambiguate by fuzzy-matching
                         # the extracted donor name(s) against each candidate's own
                         # description/beneficiary text (which almost always differs even
                         # when the date+amount collide, since it's tied to the actual sender).
-                        donor_query = " ".join(d.get("name", "") for d in donors) or donor_text
                         scored = []
                         for c in candidates:
                             haystack = f"{c['desc1']} {c['desc2']} {c['beneficiary']}"
@@ -1888,10 +1905,25 @@ with tab_entry:
                         }
                     try:
                         gs_write_client = gs_get_client(_gs_cfg_entry["service_account_info"])
-                        gs_write_donor_details(gs_write_client, _gs_cfg_entry["spreadsheet_id"], _target_tab, row_details)
-                        st.success(f"Filled in {len(row_details)} row(s) in '{_target_tab}' (columns H-L).")
-                        del st.session_state["entry_extracted"]
-                        del st.session_state["entry_match_index"]
+                        _dd_conflicts = gs_write_donor_details(gs_write_client, _gs_cfg_entry["spreadsheet_id"],
+                                                               _target_tab, row_details)
+                        _dd_written = len(row_details) - len(_dd_conflicts)
+                        if _dd_written:
+                            st.success(f"Filled in {_dd_written} row(s) in '{_target_tab}' (columns H-L).")
+                        if _dd_conflicts:
+                            st.warning(f"⚠️ {len(_dd_conflicts)} row(s) already had data in H-L - NOT overwritten "
+                                       "(this row may belong to a different, not-yet-processed donor). Please review:")
+                            st.dataframe(
+                                pd.DataFrame([
+                                    {"Sheet Row": row, "Existing Donor": c["existing_donor"],
+                                     "Existing Description": c["existing_description"], "Existing GL": c["existing_gl"]}
+                                    for row, c in _dd_conflicts.items()
+                                ]),
+                                use_container_width=True, hide_index=True,
+                            )
+                        if not _dd_conflicts:
+                            del st.session_state["entry_extracted"]
+                            del st.session_state["entry_match_index"]
                     except Exception as e:
                         st.error(f"Could not write to Google Sheet: {e}")
 

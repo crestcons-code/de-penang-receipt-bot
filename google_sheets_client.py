@@ -215,27 +215,55 @@ def find_unfilled_rows(client: gspread.Client, spreadsheet_id: str, tab_name: st
 
 
 def write_donor_details(client: gspread.Client, spreadsheet_id: str, tab_name: str,
-                        row_details: dict) -> None:
+                        row_details: dict) -> dict:
     """
     Write extracted donor details into columns H (GL), I (description), J (donor
     name), L (WhatsApp mobile) for specific EXISTING rows - matches an already
     pushed bank statement row instead of creating a new one. Column K (Whatsapp
     name) and G (Receipts No) are left untouched.
 
+    Re-checks H/I/J/L right before writing and SKIPS any row that already has
+    something in any of those columns - a row can look like the sole "unfilled"
+    candidate at match-time but may belong to a different donor's own
+    not-yet-processed transaction, or may have been filled by someone else since
+    the match was computed. Never silently overwrite.
+
     row_details: {sheet_row_number: {"gl": "...", "description": "...",
                                      "donor": "...", "mobile": "..."}, ...}
+    Returns: {sheet_row_number: {"existing_gl":.., "existing_description":..,
+              "existing_donor":.., "existing_mobile":..}, ...} for any row
+              that was SKIPPED because it already had data.
     """
     if not row_details:
-        return
+        return {}
     sh = client.open_by_key(spreadsheet_id)
     ws = sh.worksheet(tab_name)
+
+    rows_sorted = sorted(row_details.keys())
+    first_row, last_row = rows_sorted[0], rows_sorted[-1]
+    current = ws.get(f"H{first_row}:L{last_row}")   # columns H..L, 5 wide
+
+    conflicts = {}
     updates = []
     for row, d in row_details.items():
+        offset = row - first_row
+        cur_row = current[offset] if offset < len(current) else []
+        cur_row = cur_row + [""] * (5 - len(cur_row))   # pad to H,I,J,K,L
+        existing_h, existing_i, existing_j, _existing_k, existing_l = cur_row
+        if any(v.strip() for v in (existing_h, existing_i, existing_j, existing_l)):
+            conflicts[row] = {
+                "existing_gl": existing_h.strip(), "existing_description": existing_i.strip(),
+                "existing_donor": existing_j.strip(), "existing_mobile": existing_l.strip(),
+            }
+            continue
         updates.append({"range": f"H{row}", "values": [[d.get("gl", "")]]})
         updates.append({"range": f"I{row}", "values": [[d.get("description", "")]]})
         updates.append({"range": f"J{row}", "values": [[d.get("donor", "")]]})
         updates.append({"range": f"L{row}", "values": [[d.get("mobile", "")]]})
-    ws.batch_update(updates, value_input_option="USER_ENTERED")
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+    return conflicts
 
 
 def build_donor_phone_book(client: gspread.Client, spreadsheet_id: str,
