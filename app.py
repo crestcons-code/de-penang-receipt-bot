@@ -493,11 +493,19 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
     # otherwise leave a gap in this batch's numbers. Pre-filled/manually-typed
     # OR numbers (from the dana list itself) are left untouched. Grouped by
     # prefix (OR-YYMM) in case a batch spans more than one month.
+    #
+    # IMPORTANT: some of the numbers being "compacted" over were deliberately
+    # skipped by the original gap-fill assignment because they already belong
+    # to an unrelated, earlier-posted donor - blindly walking consecutive
+    # integers here would silently re-land on those taken numbers, which then
+    # get mistaken for "already posted by me" and skipped without ever
+    # creating the real receipt. Must skip anything in existing_or_numbers too.
     if "_auto_assigned" in to_post.columns:
         _auto_rows = to_post[to_post["_auto_assigned"] == True]
         if len(_auto_rows):
             import re as _re9
             from collections import defaultdict as _defaultdict
+            _existing_ors = existing_or_numbers or set()
             _groups = _defaultdict(list)
             for idx, or_no in _auto_rows["OR Number"].items():
                 m = _re9.match(r"^(OR-\d{4})(\d{3})$", str(or_no))
@@ -505,9 +513,14 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
                     _groups[m.group(1)].append((idx, int(m.group(2))))
             for prefix, items in _groups.items():
                 items.sort(key=lambda x: x[1])
-                start = items[0][1]
-                for i, (idx, _orig) in enumerate(items):
-                    to_post.loc[idx, "OR Number"] = f"{prefix}{start + i:03d}"
+                candidate = items[0][1]
+                for idx, _orig in items:
+                    new_or = f"{prefix}{candidate:03d}"
+                    while new_or in _existing_ors:
+                        candidate += 1
+                        new_or = f"{prefix}{candidate:03d}"
+                    to_post.loc[idx, "OR Number"] = new_or
+                    candidate += 1
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Transactions", f"{len(edited)}")
