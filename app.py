@@ -162,6 +162,7 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
     col_gl       = cols[7]    # accounting code
     col_desc     = cols[8]    # Dana description
     col_donor    = cols[9]  if len(cols) > 9  else None
+    col_split    = cols[10] if len(cols) > 10 else None   # "SPLIT" flag - Whatsapp name column, otherwise unused
     col_mobile   = cols[11] if len(cols) > 11 else None
 
     rows = []
@@ -246,6 +247,34 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
             # Multi-donor rows may list one contact number per line - keep them all
             mobile = ", ".join(l.strip() for l in mobile.splitlines() if l.strip()) if mobile else ""
 
+        sheet_row = int(r["_sheet_row"]) if "_sheet_row" in df.columns and pd.notna(r["_sheet_row"]) else None
+
+        # Some donors sharing one bank transfer each want their OWN receipt
+        # (e.g. a group transfer where 12 families each need an individual OR),
+        # instead of one receipt listing everyone as detail lines. Flagged per-row
+        # in column K ("SPLIT") - only takes effect when the donor cell parsed
+        # cleanly into per-donor amounts that sum to the transaction total.
+        split_flag = False
+        if col_split and pd.notna(r[col_split]):
+            split_flag = str(r[col_split]).strip().upper() == "SPLIT"
+
+        if split_flag and detail_lines:
+            for dl in detail_lines:
+                rows.append({
+                    "detail_json": "",
+                    "or_number":   "",   # each split donor gets their own auto-assigned OR
+                    "date":        txn_date,
+                    "donor_name":  dl["description"],
+                    "gl_code":     gl_code,
+                    "gl_display":  _gl_display(gl_code),
+                    "description": description,
+                    "department":  get_department(gl_code),
+                    "amount":      dl["amount"],
+                    "mobile":      mobile,
+                    "sheet_row":   sheet_row,
+                })
+            continue
+
         rows.append({
             "detail_json": json.dumps(detail_lines) if detail_lines else "",
             "or_number":   or_no,
@@ -259,7 +288,7 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
             "mobile":      mobile,
             # Present only when the source was Google Sheets - lets successfully
             # posted OR numbers be written back to the exact right row afterward.
-            "sheet_row":   int(r["_sheet_row"]) if "_sheet_row" in df.columns and pd.notna(r["_sheet_row"]) else None,
+            "sheet_row":   sheet_row,
         })
 
     return pd.DataFrame(rows), blank_gl_count[0]
@@ -487,11 +516,15 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
         st.session_state["dana_post_results"] = _post_rows(post_items, existing_or_numbers)
         _sheet_writeback = st.session_state.get("dana_sheet_writeback")
         if _sheet_writeback:
-            _row_or_map = {
-                int(item["_sheet_row"]): res["Doc No"]
-                for item, res in zip(post_items, st.session_state["dana_post_results"])
-                if res["Status"] == "success" and item.get("_sheet_row") is not None and pd.notna(item.get("_sheet_row"))
-            }
+            # A single sheet row can produce MULTIPLE OR numbers (e.g. a "split"
+            # group donation where several donors sharing one bank transfer each
+            # get their own receipt) - join them so none get silently dropped.
+            _row_or_map_lists = {}
+            for item, res in zip(post_items, st.session_state["dana_post_results"]):
+                if res["Status"] != "success" or item.get("_sheet_row") is None or not pd.notna(item.get("_sheet_row")):
+                    continue
+                _row_or_map_lists.setdefault(int(item["_sheet_row"]), []).append(res["Doc No"])
+            _row_or_map = {r: "; ".join(ors) for r, ors in _row_or_map_lists.items()}
             if _row_or_map:
                 try:
                     _wb_client = gs_get_client(_sheet_writeback["service_account_info"])
@@ -1931,6 +1964,7 @@ with tab_entry:
                     "Description":      r.get("description", ""),
                     "GL Code":          gl_code if not r.get("_error") else "",
                     "Mobile":           r.get("mobile", ""),
+                    "Split into separate OR?": False,
                     "Already Matched Row": already_row,
                     "Target Sheet Row": matched_row,
                     "Confidence":       r.get("confidence", ""),
@@ -1948,6 +1982,10 @@ with tab_entry:
                     "Source File":      st.column_config.TextColumn("Source File", disabled=True),
                     "Already Matched Row": st.column_config.NumberColumn("Matched Row", help="Already processed - this row already has the data", disabled=True),
                     "Target Sheet Row": st.column_config.NumberColumn("Target Row", help="Row number in the bank statement tab to fill in", step=1),
+                    "Split into separate OR?": st.column_config.CheckboxColumn(
+                        "Split OR?", help="Tick if these donors each need their OWN individual receipt "
+                        "instead of one combined receipt listing everyone (e.g. a group bank transfer "
+                        "where several families each want their own OR)."),
                 },
                 use_container_width=True, hide_index=True, num_rows="fixed",
                 key="entry_review_editor",
@@ -1977,6 +2015,7 @@ with tab_entry:
                         row_details[int(row["Target Sheet Row"])] = {
                             "gl": row["GL Code"], "description": row["Description"],
                             "donor": donor_cell, "mobile": row["Mobile"],
+                            "split": bool(row.get("Split into separate OR?", False)) and len(parts) > 1,
                         }
                     try:
                         gs_write_client = gs_get_client(_gs_cfg_entry["service_account_info"])

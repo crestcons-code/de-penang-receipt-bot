@@ -43,6 +43,16 @@ confidence to "low" and explain in notes. If the WhatsApp text gives a donor nam
 shows a different name (e.g. slip shows the payer's bank name, WhatsApp gives the actual donor),
 prefer the WhatsApp-stated donor name for "donors" - the bank name alone belongs in the slip's
 sender field, not necessarily the donor being credited.
+
+IMPORTANT - group transfers: the slip's own "Payee reference" / "Other transfer details" field
+often just carries a group label or collector's name (e.g. "RC G13 Kam Loong group for road
+construction") for a transfer that bundles MANY individual donors' contributions together. When
+the WhatsApp text separately lists individual named donors with their own amounts (numbered or
+not, e.g. "1. Tan Ah Kow RM50" / "2. Lim Ah Lian RM50"), you MUST use that full donor breakdown
+for "donors" - do NOT collapse them into the slip's single group label as if it were one donor.
+The group label/reference code belongs in "description" (verbatim, per the RC G### rule above),
+never as a substitute for the individual donor list. Only fall back to a single group-name donor
+entry if the WhatsApp text gives no individual names at all.
 """
 
 

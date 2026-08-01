@@ -225,8 +225,10 @@ def write_donor_details(client: gspread.Client, spreadsheet_id: str, tab_name: s
     """
     Write extracted donor details into columns H (GL), I (description), J (donor
     name), L (WhatsApp mobile) for specific EXISTING rows - matches an already
-    pushed bank statement row instead of creating a new one. Column K (Whatsapp
-    name) and G (Receipts No) are left untouched.
+    pushed bank statement row instead of creating a new one. Column G (Receipts
+    No) is left untouched. Column K is only written when the caller sets
+    "split": True (marks a group donation to be issued as separate individual
+    ORs instead of one combined receipt) - otherwise left blank as before.
 
     Re-checks H/I/J/L right before writing and SKIPS any row that already has
     something in any of those columns - a row can look like the sole "unfilled"
@@ -235,7 +237,8 @@ def write_donor_details(client: gspread.Client, spreadsheet_id: str, tab_name: s
     the match was computed. Never silently overwrite.
 
     row_details: {sheet_row_number: {"gl": "...", "description": "...",
-                                     "donor": "...", "mobile": "..."}, ...}
+                                     "donor": "...", "mobile": "...",
+                                     "split": False}, ...}
     Returns: {sheet_row_number: {"existing_gl":.., "existing_description":..,
               "existing_donor":.., "existing_mobile":..}, ...} for any row
               that was SKIPPED because it already had data.
@@ -266,6 +269,8 @@ def write_donor_details(client: gspread.Client, spreadsheet_id: str, tab_name: s
         updates.append({"range": f"I{row}", "values": [[d.get("description", "")]]})
         updates.append({"range": f"J{row}", "values": [[d.get("donor", "")]]})
         updates.append({"range": f"L{row}", "values": [[d.get("mobile", "")]]})
+        if d.get("split"):
+            updates.append({"range": f"K{row}", "values": [["SPLIT"]]})
 
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")
