@@ -207,10 +207,13 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
                 r"(.+?)[\s,，]*[-–]?\s*(?:RM\s*)?(\d[\d,]*(?:\.\d{1,2})?)\s*(?:[-–][^,，]*)?(?=[,，]|\s*$)",
                 re.IGNORECASE)
             _parsed = []
+            _line_no = 0
             for _ln in raw_donor_cell.splitlines():
-                _ln = re.sub(r"^\s*\d+[\).\:]\s*", "", _ln.strip())
+                _ln = _ln.strip()
                 if not _ln:
                     continue
+                _line_no += 1
+                _ln = re.sub(r"^\s*\d+[\).\:]\s*", "", _ln)
                 _matches = list(_pair_re.finditer(_ln))
                 if not _matches:
                     _parsed = []
@@ -225,7 +228,10 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
                     if not _name:
                         _parsed = []
                         break
-                    _parsed.append({"description": _name, "amount": _amt})
+                    # "line" = which original numbered line this donor came from -
+                    # 2+ donors sharing one line (e.g. "6. A RM20, B RM20") share
+                    # that line's own WhatsApp number (see mobile allocation below)
+                    _parsed.append({"description": _name, "amount": _amt, "line": _line_no})
                 else:
                     continue
                 break
@@ -258,10 +264,14 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
             description = GL_SHORT_DESC.get(gl_code, "General Donation")
 
         mobile = ""
+        mobile_by_line = []   # 1 entry per numbered line, in order - for split allocation
         if col_mobile and pd.notna(r[col_mobile]):
             mobile = str(r[col_mobile]).strip()
             if mobile.lower() in ("nan", "none"):
                 mobile = ""
+            if mobile:
+                mobile_by_line = [re.sub(r"^\s*\d+[\).\:]\s*", "", l.strip())
+                                   for l in mobile.splitlines() if l.strip()]
             # Multi-donor rows may list one contact number per line - keep them all
             mobile = ", ".join(l.strip() for l in mobile.splitlines() if l.strip()) if mobile else ""
 
@@ -278,6 +288,12 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
 
         if split_flag and detail_lines:
             for dl in detail_lines:
+                # Mobile numbers are listed one per ORIGINAL numbered line - two
+                # donors sharing one line (e.g. "6. A RM20, B RM20") share that
+                # line's number. Falls back to the combined string if the mobile
+                # cell doesn't have a matching line for whatever reason.
+                _line_idx = dl.get("line", 0) - 1
+                dl_mobile = mobile_by_line[_line_idx] if 0 <= _line_idx < len(mobile_by_line) else mobile
                 rows.append({
                     "detail_json": "",
                     "or_number":   "",   # each split donor gets their own auto-assigned OR
@@ -288,7 +304,7 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
                     "description": description,
                     "department":  get_department(gl_code),
                     "amount":      dl["amount"],
-                    "mobile":      mobile,
+                    "mobile":      dl_mobile,
                     "sheet_row":   sheet_row,
                 })
             continue
