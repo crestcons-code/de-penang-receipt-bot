@@ -162,34 +162,31 @@ def append_rows(client: gspread.Client, spreadsheet_id: str, tab_name: str, rows
     ws.append_rows(rows, value_input_option="USER_ENTERED")
 
 
-def find_unfilled_rows(client: gspread.Client, spreadsheet_id: str, tab_name: str) -> dict:
+def find_unfilled_rows(client: gspread.Client, spreadsheet_id: str, tab_name: str) -> tuple:
     """
-    Build an index of rows in an existing bank-statement tab (columns A-F already
-    filled by push_bank_statement, columns G-L still blank) so slip-extracted
-    donations can be matched to the RIGHT existing row instead of creating a
-    duplicate. Only rows where H (GL), I (description), J (donor), L (mobile) are
-    ALL still blank are considered candidates - already-completed rows are excluded.
+    Scan an existing bank-statement tab (columns A-F already filled by
+    push_bank_statement) and index EVERY row by (date, amount) - split into
+    unfilled candidates (H/I/J/L all blank, available to match a new slip into)
+    and already-filled rows (already has donor data - useful to detect when a
+    slip is being re-processed and point straight at the row that already has it).
 
-    Returns {(date_str, amount): [{"row": int, "desc1": str, "desc2": str,
-    "beneficiary": str}, ...]} - a list per key since more than one transaction
-    can share the same date+amount. The text fields let a caller disambiguate
-    by fuzzy-matching against a known donor name when there are multiple candidates.
+    Returns (unfilled_index, filled_index):
+      unfilled_index: {(date_str, amount): [{"row": int, "desc1", "desc2",
+                        "beneficiary"}, ...]}
+      filled_index:   {(date_str, amount): [{"row": int, "donor": str}, ...]}
     """
     import re as _re
     sh = client.open_by_key(spreadsheet_id)
     ws = sh.worksheet(tab_name)
     values = ws.get_all_values()
-    index = {}
+    unfilled_index = {}
+    filled_index = {}
     for i, row in enumerate(values[1:], start=2):   # row 1 = header
         if len(row) < 6:
             continue
         date_raw = row[0].strip()
         amount_raw = row[5].strip()
         if not date_raw or not amount_raw:
-            continue
-        # Columns H, I, J, L (indices 7, 8, 9, 11) must all be blank
-        already_filled = any((row[idx].strip() if idx < len(row) else "") for idx in (7, 8, 9, 11))
-        if already_filled:
             continue
         # Dates may be ISO ("2026-07-28", from push_bank_statement) or the sheet's
         # native "28 Jul 2026" text format - normalize both to YYYY-MM-DD
@@ -205,13 +202,22 @@ def find_unfilled_rows(client: gspread.Client, spreadsheet_id: str, tab_name: st
             amount = round(float(cleaned), 2)
         except ValueError:
             continue
-        index.setdefault((date_str, amount), []).append({
-            "row": i,
-            "desc1": row[1].strip() if len(row) > 1 else "",
-            "desc2": row[2].strip() if len(row) > 2 else "",
-            "beneficiary": row[3].strip() if len(row) > 3 else "",
-        })
-    return index
+
+        # Columns H, I, J, L (indices 7, 8, 9, 11)
+        already_filled = any((row[idx].strip() if idx < len(row) else "") for idx in (7, 8, 9, 11))
+        if already_filled:
+            filled_index.setdefault((date_str, amount), []).append({
+                "row": i,
+                "donor": row[9].strip() if len(row) > 9 else "",
+            })
+        else:
+            unfilled_index.setdefault((date_str, amount), []).append({
+                "row": i,
+                "desc1": row[1].strip() if len(row) > 1 else "",
+                "desc2": row[2].strip() if len(row) > 2 else "",
+                "beneficiary": row[3].strip() if len(row) > 3 else "",
+            })
+    return unfilled_index, filled_index
 
 
 def write_donor_details(client: gspread.Client, spreadsheet_id: str, tab_name: str,

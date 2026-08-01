@@ -1774,20 +1774,21 @@ with tab_entry:
                 # auto-match so two slips with the same date+amount don't both claim
                 # the same sheet row.
                 try:
-                    match_index = gs_find_unfilled_rows(_entry_client, _gs_cfg_entry["spreadsheet_id"], _target_tab)
+                    match_index, filled_index = gs_find_unfilled_rows(_entry_client, _gs_cfg_entry["spreadsheet_id"], _target_tab)
                 except Exception as e:
                     st.error(f"Could not read '{_target_tab}' to match against: {e}")
-                    match_index = {}
+                    match_index, filled_index = {}, {}
                 st.session_state["entry_match_index"] = match_index
+                st.session_state["entry_filled_index"] = filled_index
 
         if "entry_extracted" in st.session_state:
             extracted = st.session_state["entry_extracted"]
             match_index = {k: list(v) for k, v in st.session_state.get("entry_match_index", {}).items()}
+            filled_index = st.session_state.get("entry_filled_index", {})
             st.divider()
             st.subheader("Review & Confirm")
-            st.caption("Target Sheet Row is auto-matched by date + amount against unfilled rows in "
-                       "the bank statement tab. Blank = no unique match found - fill in the row "
-                       "number yourself after checking the sheet, or leave blank to skip.")
+            st.caption("Already Matched Row = already done, skipped. Target Sheet Row = where this "
+                       "will be written. Blank Target Row = fill in manually or check Notes.")
 
             review_rows = []
             for r in extracted:
@@ -1799,68 +1800,73 @@ with tab_entry:
                     gl_code = ""
 
                 matched_row = None
+                already_row = None
                 match_note = ""
                 donor_query = " ".join(d.get("name", "") for d in donors) or donor_text
                 if not r.get("_error") and r.get("date"):
                     key = (r["date"], round(float(r.get("amount", 0) or 0), 2))
-                    candidates = match_index.get(key, [])
-                    if len(candidates) == 1:
-                        # Even with only one candidate, sanity-check the donor name
-                        # against its own bank description before trusting it blindly -
-                        # a "sole remaining unfilled row" can still belong to a DIFFERENT
-                        # donor whose own transaction just hasn't been processed yet
-                        # (e.g. if another row at this date+amount was already filled in
-                        # a previous run, the last unfilled one isn't automatically this
-                        # slip's match).
-                        only_c = candidates[0]
-                        haystack = f"{only_c['desc1']} {only_c['desc2']} {only_c['beneficiary']}"
-                        sanity_score = fuzz.WRatio(donor_query, haystack, processor=fuzz_utils.default_process) \
-                                       if donor_query and haystack.strip() else 0
-                        if sanity_score >= 50:
-                            matched_row = candidates.pop(0)["row"]
+
+                    # Check FIRST whether this exact date+amount+donor is already
+                    # filled in somewhere - i.e. this slip was already processed
+                    # before. If so, just point at that row and stop - no need to
+                    # match against unfilled candidates at all.
+                    for fc in filled_index.get(key, []):
+                        fscore = fuzz.WRatio(donor_query, fc["donor"], processor=fuzz_utils.default_process) \
+                                 if donor_query and fc["donor"] else 0
+                        if fscore >= 70:
+                            already_row = fc["row"]
+                            break
+
+                    if already_row is None:
+                        candidates = match_index.get(key, [])
+                        if len(candidates) == 1:
+                            # Even with only one candidate, sanity-check the donor name
+                            # against its own bank description before trusting it blindly -
+                            # a "sole remaining unfilled row" can still belong to a
+                            # DIFFERENT donor whose own transaction hasn't been processed yet.
+                            only_c = candidates[0]
+                            haystack = f"{only_c['desc1']} {only_c['desc2']} {only_c['beneficiary']}"
+                            sanity_score = fuzz.WRatio(donor_query, haystack, processor=fuzz_utils.default_process) \
+                                           if donor_query and haystack.strip() else 0
+                            if sanity_score >= 50:
+                                matched_row = candidates.pop(0)["row"]
+                            else:
+                                match_note = f"Low match (row {only_c['row']}, score {sanity_score:.0f}) - verify"
+                        elif len(candidates) > 1:
+                            # Multiple rows share this date+amount - disambiguate by
+                            # fuzzy-matching donor name against each candidate's own
+                            # description/beneficiary text.
+                            scored = []
+                            for c in candidates:
+                                haystack = f"{c['desc1']} {c['desc2']} {c['beneficiary']}"
+                                score = fuzz.WRatio(donor_query, haystack, processor=fuzz_utils.default_process) \
+                                        if donor_query and haystack.strip() else 0
+                                scored.append((score, c))
+                            scored.sort(key=lambda x: x[0], reverse=True)
+                            best_score, best_c = scored[0]
+                            second_score = scored[1][0] if len(scored) > 1 else 0
+                            if best_score >= 60 and (best_score - second_score) >= 10:
+                                matched_row = best_c["row"]
+                                match_note = f"Auto-picked row {matched_row} (score {best_score:.0f}) - verify"
+                            else:
+                                rows_list = ", ".join(str(c["row"]) for c in candidates)
+                                match_note = f"Ambiguous: rows {rows_list} - pick one"
                         else:
-                            match_note = (f"1 unfilled row found (row {only_c['row']}) but its bank description "
-                                          f"({only_c['beneficiary'] or only_c['desc2'] or only_c['desc1']!r}) doesn't "
-                                          f"resemble the donor name (score {sanity_score:.0f}) - likely belongs to a "
-                                          "different donor. Please verify manually before setting Target Sheet Row.")
-                    elif len(candidates) > 1:
-                        # Multiple rows share this date+amount - disambiguate by fuzzy-matching
-                        # the extracted donor name(s) against each candidate's own
-                        # description/beneficiary text (which almost always differs even
-                        # when the date+amount collide, since it's tied to the actual sender).
-                        scored = []
-                        for c in candidates:
-                            haystack = f"{c['desc1']} {c['desc2']} {c['beneficiary']}"
-                            # processor=default_process is REQUIRED for case-insensitive
-                            # matching (e.g. donor name vs ALL-CAPS bank text) - without it,
-                            # case differences alone tank scores to near-random levels
-                            score = fuzz.WRatio(donor_query, haystack, processor=fuzz_utils.default_process) \
-                                    if donor_query and haystack.strip() else 0
-                            scored.append((score, c))
-                        scored.sort(key=lambda x: x[0], reverse=True)
-                        best_score, best_c = scored[0]
-                        second_score = scored[1][0] if len(scored) > 1 else 0
-                        if best_score >= 60 and (best_score - second_score) >= 10:
-                            matched_row = best_c["row"]
-                            match_note = f"Auto-picked row {matched_row} by donor name match (score {best_score:.0f}) among {len(candidates)} same date+amount rows - please verify"
-                        else:
-                            cand_desc = "; ".join(f"row {c['row']}: {c['beneficiary'] or c['desc2'] or c['desc1']}" for c in candidates)
-                            match_note = f"Ambiguous: {len(candidates)} rows match this date+amount - {cand_desc} - pick one"
-                    else:
-                        match_note = "No unfilled row found with this date+amount"
+                            match_note = "No unfilled row found"
 
                 review_rows.append({
-                    "Include":         not r.get("_error") and matched_row is not None,
-                    "Source File":     r.get("_source_file", ""),
-                    "Date":            r.get("date", ""),
-                    "Amount":          float(r.get("amount", 0) or 0),
-                    "Donor(s)":        donor_text,
-                    "Description":     r.get("description", ""),
-                    "GL Code":         gl_code if not r.get("_error") else "",
-                    "Mobile":          r.get("mobile", ""),
+                    "Include":          not r.get("_error") and matched_row is not None and already_row is None,
+                    "Source File":      r.get("_source_file", ""),
+                    "Date":             r.get("date", ""),
+                    "Amount":           float(r.get("amount", 0) or 0),
+                    "Donor(s)":         donor_text,
+                    "Description":      r.get("description", ""),
+                    "GL Code":          gl_code if not r.get("_error") else "",
+                    "Mobile":           r.get("mobile", ""),
+                    "Already Matched Row": already_row,
                     "Target Sheet Row": matched_row,
-                    "Confidence":      r.get("confidence", ""),
-                    "Notes":           " | ".join(filter(None, [r.get("_error", ""), match_note, r.get("notes", "")])),
+                    "Confidence":       r.get("confidence", ""),
+                    "Notes":            r.get("_error", "") or match_note,
                 })
 
             df_review = pd.DataFrame(review_rows)
@@ -1872,6 +1878,7 @@ with tab_entry:
                     "Amount":           st.column_config.NumberColumn("Amount (RM)", format="RM %.2f"),
                     "GL Code":          st.column_config.SelectboxColumn("GL Code", options=[""] + _gl_code_options_entry),
                     "Source File":      st.column_config.TextColumn("Source File", disabled=True),
+                    "Already Matched Row": st.column_config.NumberColumn("Already Matched Row", help="This slip was already processed - row already has this data", disabled=True),
                     "Target Sheet Row": st.column_config.NumberColumn("Target Sheet Row", help="Row number in the bank statement tab to fill in", step=1),
                 },
                 use_container_width=True, hide_index=True, num_rows="fixed",
