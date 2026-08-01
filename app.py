@@ -1787,8 +1787,7 @@ with tab_entry:
             filled_index = st.session_state.get("entry_filled_index", {})
             st.divider()
             st.subheader("Review & Confirm")
-            st.caption("Already Matched Row = already done, skipped. Target Sheet Row = where this "
-                       "will be written. Blank Target Row = fill in manually or check Notes.")
+            st.caption("Matched Row = already done, skipped. Target Row = where this will be written.")
 
             review_rows = []
             for r in extracted:
@@ -1878,8 +1877,8 @@ with tab_entry:
                     "Amount":           st.column_config.NumberColumn("Amount (RM)", format="RM %.2f"),
                     "GL Code":          st.column_config.SelectboxColumn("GL Code", options=[""] + _gl_code_options_entry),
                     "Source File":      st.column_config.TextColumn("Source File", disabled=True),
-                    "Already Matched Row": st.column_config.NumberColumn("Already Matched Row", help="This slip was already processed - row already has this data", disabled=True),
-                    "Target Sheet Row": st.column_config.NumberColumn("Target Sheet Row", help="Row number in the bank statement tab to fill in", step=1),
+                    "Already Matched Row": st.column_config.NumberColumn("Matched Row", help="Already processed - this row already has the data", disabled=True),
+                    "Target Sheet Row": st.column_config.NumberColumn("Target Row", help="Row number in the bank statement tab to fill in", step=1),
                 },
                 use_container_width=True, hide_index=True, num_rows="fixed",
                 key="entry_review_editor",
