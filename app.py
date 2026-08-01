@@ -383,6 +383,15 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
     df_rows = pd.DataFrame(rows)
     df_rows["Post"] = st.session_state.post_all
 
+    # Put Possible Duplicate right after OR Number for visibility; keep every
+    # other column (including hidden ones like _details) in its original order.
+    if "Possible Duplicate" in df_rows.columns and "OR Number" in df_rows.columns:
+        _cols = list(df_rows.columns)
+        _cols.remove("Possible Duplicate")
+        _or_idx = _cols.index("OR Number")
+        _cols.insert(_or_idx + 1, "Possible Duplicate")
+        df_rows = df_rows[_cols]
+
     # Build options list that includes any GL codes from the data not already in GL_OPTIONS
     all_gl_options = list(GL_OPTIONS.keys())
     for gl_val in df_rows["GL Account"].dropna().unique():
