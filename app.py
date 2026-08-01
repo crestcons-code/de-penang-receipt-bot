@@ -401,6 +401,8 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
             "Department":       st.column_config.TextColumn("Department"),
             "Amount (RM)":      st.column_config.NumberColumn("Amount (RM)", format="RM %.2f", disabled=True),
             "WhatsApp Mobile":  st.column_config.TextColumn("WhatsApp Mobile", help="Edit to add or correct the donor's WhatsApp number"),
+            "Possible Duplicate": st.column_config.TextColumn("⚠️ Possible Duplicate", disabled=True,
+                                  help="A previously posted OR looks similar but wasn't an exact match - please verify in Autocount before posting"),
             "_details":         None,   # hidden: per-donor detail lines (JSON) for multi-donor receipts
             "_sheet_row":       None,   # hidden: source Google Sheet row number, for OR write-back after posting
         },
@@ -668,6 +670,7 @@ with tab_bank:
                 "Description": short_desc,
                 "Department":  get_department(gl_code),
                 "Amount (RM)": txn["credit"],
+                "Possible Duplicate": "",
             })
             seq += 1
 
@@ -863,6 +866,25 @@ with tab_dana:
                     or_no = f"OR-{t_yy}{t_mm}{seq:03d}"
                     seq += 1
 
+            # Not an exact/prefix duplicate, but for long multi-donor entries (where
+            # Autocount's stored text can be REFORMATTED, not just truncated, from
+            # what's in the dana list) also check for a fuzzy resemblance to any
+            # already-posted record at this date+amount. A wrong fuzzy-match SKIP
+            # would silently drop a real donation, so this only WARNS - it never
+            # auto-skips - and only applies to long blobs (short names are already
+            # reliably handled by the exact/prefix check above, and fuzzy-matching
+            # short names risks false positives as seen elsewhere in this app).
+            possible_dup = ""
+            if len(donor_key) >= 50:
+                for p in _by_date_amt.get((txn_date, amount), []):
+                    dw = p.get("dealWith", "")
+                    if not dw:
+                        continue
+                    fscore = fuzz.WRatio(donor_key, dw, processor=fuzz_utils.default_process)
+                    if fscore >= 75:
+                        possible_dup = f"{p['docNo']} ({fscore:.0f}% similar) - verify before posting"
+                        break
+
             rows.append({
                 "Post":           True,
                 "OR Number":      or_no,
@@ -873,6 +895,7 @@ with tab_dana:
                 "Department":     txn["department"],
                 "Amount (RM)":    amount,
                 "WhatsApp Mobile": txn.get("mobile", ""),
+                "Possible Duplicate": possible_dup,
                 "_details":       txn.get("detail_json", ""),
                 "_sheet_row":     txn.get("sheet_row"),
             })
@@ -905,6 +928,7 @@ with tab_dana:
                             "Department":     txn["department"],
                             "Amount (RM)":    amount,
                             "WhatsApp Mobile": txn.get("mobile", ""),
+                            "Possible Duplicate": "",
                             "_sheet_row":     txn.get("sheet_row"),
                         })
                     if reinclude_idx:
