@@ -187,7 +187,15 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
         donor = ", ".join(l.strip() for l in donor.splitlines() if l.strip()) if donor else ""
 
         # Multi-donor rows with per-donor amounts (e.g. "1) Lim Bee Chin RM30") become
-        # separate detail lines on the one receipt - only when the amounts add up
+        # separate detail lines on the one receipt - only when the amounts add up.
+        # A single numbered line can itself hold MORE THAN ONE donor+amount pair
+        # (e.g. "6. Tew Teik Khoon & Family RM20, Tew Yin Yin RM20") - each comma-
+        # separated chunk that ends in its own amount is its own entry, while a
+        # family sharing ONE amount across several comma-separated names (e.g.
+        # "Wong Bak Hook, Ong Lay Choo, ... RM20") stays a single entry, because
+        # the non-greedy match only stops at the first chunk that already ends in
+        # a number - intermediate commas with no number before them are absorbed
+        # into the same name.
         detail_lines = []
         if raw_donor_cell and "\n" in raw_donor_cell:
             # Allow trailing notes after the amount (e.g. "3. Amy Choy RM50 -P"),
@@ -195,22 +203,32 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
             # (e.g. "黄美娥 10" meaning RM10)
             # Amount group must START with a digit, so a lone trailing comma (with no
             # actual number) can't match and produce an empty string on float()
-            _line_re = re.compile(r"^\s*(?:\d+[\).\:]\s*)?(.+?)[\s,，]*[-–]?\s*(?:RM\s*)?(\d[\d,]*(?:\.\d{1,2})?)\s*(?:[-–].*)?$", re.IGNORECASE)
+            _pair_re = re.compile(
+                r"(.+?)[\s,，]*[-–]?\s*(?:RM\s*)?(\d[\d,]*(?:\.\d{1,2})?)\s*(?:[-–][^,，]*)?(?=[,，]|\s*$)",
+                re.IGNORECASE)
             _parsed = []
             for _ln in raw_donor_cell.splitlines():
-                _ln = _ln.strip()
+                _ln = re.sub(r"^\s*\d+[\).\:]\s*", "", _ln.strip())
                 if not _ln:
                     continue
-                _m = _line_re.match(_ln)
-                if not _m:
+                _matches = list(_pair_re.finditer(_ln))
+                if not _matches:
                     _parsed = []
                     break
-                try:
-                    _amt = float(_m.group(2).replace(",", ""))
-                except ValueError:
-                    _parsed = []
-                    break
-                _parsed.append({"description": _m.group(1).strip(), "amount": _amt})
+                for _m in _matches:
+                    try:
+                        _amt = float(_m.group(2).replace(",", ""))
+                    except ValueError:
+                        _parsed = []
+                        break
+                    _name = _m.group(1).strip(" ,，-–")
+                    if not _name:
+                        _parsed = []
+                        break
+                    _parsed.append({"description": _name, "amount": _amt})
+                else:
+                    continue
+                break
             if len(_parsed) > 1 and abs(sum(p["amount"] for p in _parsed) - amount) < 0.01:
                 detail_lines = _parsed
 
