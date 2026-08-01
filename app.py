@@ -405,21 +405,49 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
                                   help="A previously posted OR looks similar but wasn't an exact match - please verify in Autocount before posting"),
             "_details":         None,   # hidden: per-donor detail lines (JSON) for multi-donor receipts
             "_sheet_row":       None,   # hidden: source Google Sheet row number, for OR write-back after posting
+            "_auto_assigned":   None,   # hidden: True if this OR number was auto-generated (vs pre-filled), for renumbering when rows get unticked
         },
         use_container_width=True,
         hide_index=True,
         num_rows="fixed",
     )
 
-    to_post   = edited[edited["Post"] == True]
+    to_post   = edited[edited["Post"] == True].copy()
     total_all = edited["Amount (RM)"].sum()
     total_sel = to_post["Amount (RM)"].sum()
+
+    # Renumber auto-assigned OR numbers so they're consecutive among only the
+    # currently-ticked rows - unticking a row (e.g. a possible duplicate) would
+    # otherwise leave a gap in this batch's numbers. Pre-filled/manually-typed
+    # OR numbers (from the dana list itself) are left untouched. Grouped by
+    # prefix (OR-YYMM) in case a batch spans more than one month.
+    if "_auto_assigned" in to_post.columns:
+        _auto_rows = to_post[to_post["_auto_assigned"] == True]
+        if len(_auto_rows):
+            import re as _re9
+            from collections import defaultdict as _defaultdict
+            _groups = _defaultdict(list)
+            for idx, or_no in _auto_rows["OR Number"].items():
+                m = _re9.match(r"^(OR-\d{4})(\d{3})$", str(or_no))
+                if m:
+                    _groups[m.group(1)].append((idx, int(m.group(2))))
+            for prefix, items in _groups.items():
+                items.sort(key=lambda x: x[1])
+                start = items[0][1]
+                for i, (idx, _orig) in enumerate(items):
+                    to_post.loc[idx, "OR Number"] = f"{prefix}{start + i:03d}"
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Transactions", f"{len(edited)}")
     c2.metric("Selected for Posting", f"{len(to_post)}")
     c3.metric("Total Amount (RM)", f"{total_sel:,.2f}",
               delta=f"{total_all - total_sel:,.2f} excluded" if total_all != total_sel else None)
+
+    if len(to_post):
+        with st.expander(f"Preview: OR numbers that will be posted ({len(to_post)})"):
+            st.dataframe(to_post[["OR Number", "Donor Name", "Amount (RM)"]],
+                        use_container_width=True, hide_index=True)
+
     st.divider()
 
     # â"€â"€ Step 3: Post to Autocount
@@ -671,6 +699,7 @@ with tab_bank:
                 "Department":  get_department(gl_code),
                 "Amount (RM)": txn["credit"],
                 "Possible Duplicate": "",
+                "_auto_assigned": True,
             })
             seq += 1
 
@@ -856,6 +885,7 @@ with tab_dana:
                 continue
 
             # Use pre-filled OR number, or fill a gap number first, then continue the sequence
+            auto_assigned = not txn["or_number"]
             if txn["or_number"]:
                 or_no = txn["or_number"]
             else:
@@ -898,6 +928,7 @@ with tab_dana:
                 "Possible Duplicate": possible_dup,
                 "_details":       txn.get("detail_json", ""),
                 "_sheet_row":     txn.get("sheet_row"),
+                "_auto_assigned": auto_assigned,
             })
 
         if skipped_rows:
@@ -915,6 +946,7 @@ with tab_dana:
                         txn = skipped_txns[idx]
                         txn_date = txn["date"]
                         amount   = round(float(txn["amount"]), 2)
+                        _auto = not txn["or_number"]
                         or_no = txn["or_number"] if txn["or_number"] else f"OR-{txn_date[2:4]}{txn_date[5:7]}{seq:03d}"
                         if not txn["or_number"]:
                             seq += 1
@@ -930,6 +962,7 @@ with tab_dana:
                             "WhatsApp Mobile": txn.get("mobile", ""),
                             "Possible Duplicate": "",
                             "_sheet_row":     txn.get("sheet_row"),
+                            "_auto_assigned": _auto,
                         })
                     if reinclude_idx:
                         st.success(f"{len(reinclude_idx)} row(s) added to Step 2 below.")
