@@ -25,3 +25,9 @@ GOOGLE_SHEETS = {
 # Optional: Anthropic API key for the AI slip-reading Dana Entry feature.
 # Get one from https://console.anthropic.com (Settings > API Keys).
 ANTHROPIC_API_KEY = "sk-ant-your-key-here"
+
+# Secret key used to sign login session cookies. MUST be a long random
+# string kept private - generate one with:
+#   python -c "import secrets; print(secrets.token_hex(32))"
+# Never reuse the example value below, and never commit your real one.
+COOKIE_KEY = "generate-your-own-random-key-here"

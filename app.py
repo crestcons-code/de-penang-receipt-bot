@@ -11,7 +11,7 @@ sys.path.insert(0, '.')
 from parse_maybank import load_statement
 from donation_mapping import map_to_gl, DONATION_MAP, get_department, GL_DEPARTMENT
 from autocount_api import AutocountClient
-from config_loader import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD, get_google_sheets_config, get_anthropic_api_key
+from config_loader import MAYBANK_GL_CODE, DEFAULT_PAYMENT_METHOD, get_google_sheets_config, get_anthropic_api_key, get_cookie_key
 from google_sheets_client import (
     get_client as gs_get_client,
     push_bank_statement as gs_push_bank_statement,
@@ -61,10 +61,23 @@ def _save_users_to_github(users_dict: dict) -> bool:
 
 _users_data = _load_users_from_github() or _load_users_local()
 
+# Cookie signing key MUST come from secrets, never be hardcoded in source -
+# anyone who knows it can forge a valid "logged in" cookie for any user
+# without ever needing a password. If it's not configured yet, fall back to
+# a random key generated fresh each time the app process starts - this keeps
+# the app usable but logs everyone out on every restart/redeploy, as a
+# visible nudge to finish setting COOKIE_KEY in secrets.
+_cookie_key = get_cookie_key()
+if not _cookie_key:
+    import secrets as _secrets_mod
+    _cookie_key = _secrets_mod.token_hex(32)
+    st.warning("⚠️ COOKIE_KEY isn't set in secrets - using a temporary key for this session only. "
+               "Everyone will be logged out on the next restart. Ask your developer to set COOKIE_KEY.")
+
 authenticator = stauth.Authenticate(
     _users_data,
     cookie_name="dep_receipt_app",
-    cookie_key="dep_secret_key_2026",
+    cookie_key=_cookie_key,
     cookie_expiry_days=30,
 )
 

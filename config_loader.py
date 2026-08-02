@@ -60,6 +60,28 @@ def get_google_sheets_config():
         return {"service_account_info": None, "spreadsheet_id": None}
 
 
+def get_cookie_key():
+    """
+    Returns the secret key used to sign login session cookies.
+    On Streamlit Cloud: reads st.secrets["COOKIE_KEY"].
+    Locally: reads COOKIE_KEY from config.py.
+    Must never be hardcoded in source - anyone who knows it can forge a
+    valid "logged in" cookie for any user without a password.
+    """
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and "COOKIE_KEY" in st.secrets:
+            return st.secrets["COOKIE_KEY"]
+    except Exception:
+        pass
+
+    try:
+        from config import COOKIE_KEY
+        return COOKIE_KEY
+    except Exception:
+        return None
+
+
 def get_anthropic_api_key():
     """
     Returns the Anthropic API key string, or None if not configured yet.
