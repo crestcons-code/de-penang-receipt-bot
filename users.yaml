@@ -4,8 +4,8 @@ usernames:
     password: $2b$12$G/.iXjPaX10EMapJaXl2Xul2Tp1VTumcCHCy/nQYkD9GOhyLb8mFW
     role: user
   crestcons:
-    name: bk
-    password: $2b$12$q2OCd1uWqcXqgdmbTv7RweXAXB.ZZWbuf4ecghOr8Iw2Y8ZGY4HKy
+    name: boon kang
+    password: $2b$12$/Fs8iYG/hNRgk3J7pulrhuwO3K4PaQkMei2GVAY6upS.2Mw4fAyWG
     role: admin
   eancheng:
     name: Lee Ean Cheng
