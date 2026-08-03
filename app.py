@@ -144,6 +144,40 @@ with st.sidebar:
     st.markdown(f"**{_current_name}**")
     authenticator.logout("Logout")
 
+    # Self-service password change. Scoped strictly to the logged-in user's own
+    # entry, and requires their current password - so an unattended open session
+    # can't be used to silently take the account over. Lets an admin hand out a
+    # temporary password without permanently knowing everyone's real one.
+    with st.expander("🔑 Change My Password"):
+        with st.form("change_own_password"):
+            _cur_pw  = st.text_input("Current password", type="password")
+            _new_pw  = st.text_input("New password", type="password")
+            _new_pw2 = st.text_input("Confirm new password", type="password")
+            _cp_btn  = st.form_submit_button("Update Password", type="primary")
+
+        if _cp_btn:
+            _stored = _users_data.get("usernames", {}).get(_current_user, {}).get("password", "")
+            try:
+                _cur_ok = bcrypt.checkpw(_cur_pw.encode(), _stored.encode()) if _cur_pw and _stored else False
+            except Exception:
+                _cur_ok = False
+
+            if not _cur_ok:
+                st.error("Current password is incorrect.")
+            elif len(_new_pw) < 8:
+                st.error("New password must be at least 8 characters.")
+            elif _new_pw != _new_pw2:
+                st.error("The two new passwords don't match.")
+            elif _new_pw == _cur_pw:
+                st.error("New password must be different from the current one.")
+            else:
+                _users_data["usernames"][_current_user]["password"] = \
+                    bcrypt.hashpw(_new_pw.encode(), bcrypt.gensalt()).decode()
+                if _save_users_to_github(_users_data):
+                    st.success("Password updated. Use it the next time you log in.")
+                else:
+                    st.error("Could not save the new password. Please tell your administrator.")
+
 
 # â"€â"€ GL code options for dropdown
 GL_OPTIONS = {f"{code}  {desc}": code for code, desc, _ in DONATION_MAP}
