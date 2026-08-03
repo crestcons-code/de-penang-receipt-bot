@@ -25,24 +25,42 @@ st.set_page_config(page_title="DE Penang Autocount Donation Receipts Apps", page
 # ── Load users from GitHub (cloud) or local users.yaml
 import base64, yaml, bcrypt, requests as _req
 
+# The user list (names + bcrypt password hashes) is personal data and must NOT
+# live in this repo, which is public. It's kept in a separate PRIVATE repo and
+# fetched at runtime with GITHUB_TOKEN. Note this is independent of Streamlit
+# Cloud's own GitHub permissions - the app calls the API itself, so a private
+# store here does not require Streamlit to have private-repo access.
+_USERS_REPO = "crestcons-code/de-penang-users"
+try:
+    _USERS_REPO = st.secrets.get("USERS_REPO", _USERS_REPO)
+except Exception:
+    pass
+_USERS_API_URL = f"https://api.github.com/repos/{_USERS_REPO}/contents/users.yaml"
+_users_load_error = ""
+
 def _load_users_from_github() -> dict:
+    global _users_load_error
     try:
         token = st.secrets.get("GITHUB_TOKEN", "")
         if not token:
-            raise ValueError("No GITHUB_TOKEN")
+            raise ValueError("GITHUB_TOKEN is not set in secrets")
         headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-        r = _req.get("https://api.github.com/repos/crestcons-code/de-penang-receipt-bot/contents/users.yaml", headers=headers, timeout=10)
+        r = _req.get(_USERS_API_URL, headers=headers, timeout=10)
+        if r.status_code == 404:
+            raise ValueError(f"{_USERS_REPO} or users.yaml not found - check the token can read this private repo")
         r.raise_for_status()
         return yaml.safe_load(base64.b64decode(r.json()["content"]))
-    except Exception:
+    except Exception as e:
+        _users_load_error = str(e)
         return None
 
 def _load_users_local() -> dict:
+    # Local development only - users.yaml is gitignored, never committed here
     try:
         with open("users.yaml", encoding="utf-8") as f:
             return yaml.safe_load(f)
     except Exception:
-        return {"usernames": {"crestcons": {"name": "Crestcons", "password": "$2b$12$q2OCd1uWqcXqgdmbTv7RweXAXB.ZZWbuf4ecghOr8Iw2Y8ZGY4HKy", "role": "admin"}}}
+        return None
 
 def _save_users_to_github(users_dict: dict) -> bool:
     try:
@@ -50,16 +68,25 @@ def _save_users_to_github(users_dict: dict) -> bool:
         if not token:
             return False
         headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-        url = "https://api.github.com/repos/crestcons-code/de-penang-receipt-bot/contents/users.yaml"
-        sha = _req.get(url, headers=headers, timeout=10).json().get("sha", "")
+        sha = _req.get(_USERS_API_URL, headers=headers, timeout=10).json().get("sha", "")
         new_content = yaml.dump(users_dict, default_flow_style=False, allow_unicode=True)
         payload = {"message": "Update users", "content": base64.b64encode(new_content.encode()).decode(), "sha": sha}
-        r = _req.put(url, headers=headers, json=payload, timeout=10)
+        r = _req.put(_USERS_API_URL, headers=headers, json=payload, timeout=10)
         return r.status_code in (200, 201)
     except Exception:
         return False
 
 _users_data = _load_users_from_github() or _load_users_local()
+
+# Fail loudly rather than falling back to some built-in account - a hardcoded
+# login in public source is exactly the exposure this change exists to remove,
+# and silently locking out real volunteers would be worse than a clear error.
+if not _users_data or not _users_data.get("usernames"):
+    st.error("Could not load the user list, so login is unavailable.\n\n"
+             f"Reason: {_users_load_error or 'no user list found'}\n\n"
+             "Please check that GITHUB_TOKEN is set in the app's secrets and has access to "
+             f"the private repo `{_USERS_REPO}`.")
+    st.stop()
 
 # Cookie signing key MUST come from secrets, never be hardcoded in source -
 # anyone who knows it can forge a valid "logged in" cookie for any user
