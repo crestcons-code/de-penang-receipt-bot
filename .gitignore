@@ -19,3 +19,6 @@ test_*.py
 # Excel review/report files
 review_*.xlsx
 posted_*.xlsx
+
+# User list (names + password hashes) - lives in the private de-penang-users repo
+users.yaml
