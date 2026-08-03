@@ -2177,7 +2177,12 @@ if tab_admin is not None:
             edit_name     = st.text_input("New Display Name (leave blank to keep current)")
             edit_username = st.text_input("New Username (leave blank to keep current)").strip().lower()
             edit_password = st.text_input("New Password (leave blank to keep current)", type="password")
-            edit_role     = st.selectbox("Role", ["user", "admin"])
+            # Must default to "keep current": the user being edited is picked inside
+            # this same form, so this dropdown cannot preselect their actual role. A
+            # plain ["user","admin"] list silently demotes an admin who edited only
+            # their password - and with a single admin that locks everyone out of
+            # this tab for good.
+            edit_role     = st.selectbox("Role", ["(keep current)", "user", "admin"])
             edit_btn      = st.form_submit_button("Save Changes", type="primary")
 
         if edit_btn:
@@ -2191,7 +2196,13 @@ if tab_admin is not None:
                 import bcrypt as _bcrypt
                 user_data["password"] = _bcrypt.hashpw(edit_password.encode(), _bcrypt.gensalt()).decode()
                 changed = True
-            if edit_role != user_data.get("role", "user"):
+            if edit_role != "(keep current)" and edit_role != user_data.get("role", "user"):
+                # Refuse to remove the last admin - there would be no way to get
+                # back into this tab to undo it
+                if user_data.get("role") == "admin" and edit_role != "admin" and \
+                   sum(1 for v in users.values() if v.get("role") == "admin") <= 1:
+                    st.error("Cannot change the role of the only admin - promote another user to admin first.")
+                    st.stop()
                 user_data["role"] = edit_role
                 changed = True
 
