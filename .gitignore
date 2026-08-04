@@ -25,3 +25,6 @@ users.yaml
 
 # Sheet backups - contain donor names, phone numbers and amounts
 backups/
+
+# Ready-to-paste Apps Script copies - contain the real sheet ID and email
+*.READY.gs

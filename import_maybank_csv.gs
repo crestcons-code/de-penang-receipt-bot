@@ -75,11 +75,17 @@ function importMaybankCsv() {
 
   var report = [];
   var totalAdded = 0;
+  var skipped = 0;
 
   Object.keys(byMonth).sort().forEach(function (yyyymm) {
     var sheet = findMonthSheet_(ss, yyyymm);
     if (!sheet) {
-      report.push('No tab for ' + yyyymm + ' - skipped ' + byMonth[yyyymm].length + ' row(s).');
+      // A missing tab has to be shouted about, not just logged. At the start of
+      // a new month this would otherwise drop every transaction silently, and
+      // nobody would notice until the receipts stopped adding up.
+      skipped += byMonth[yyyymm].length;
+      report.push('WARNING: no tab named ' + yyyymm + ' - ' + byMonth[yyyymm].length +
+                  ' row(s) NOT imported. Create that tab and the next run catches up.');
       return;
     }
     var added = appendNewRows_(sheet, byMonth[yyyymm]);
@@ -92,8 +98,13 @@ function importMaybankCsv() {
                 report.join('\n');
   log_(summary);
 
-  if (NOTIFY_EMAIL && totalAdded > 0) {
-    MailApp.sendEmail(NOTIFY_EMAIL, 'Dana list: ' + totalAdded + ' new bank row(s)', summary);
+  // Email on new rows OR on anything skipped - silence should mean "nothing
+  // happened", never "something went wrong and you weren't told".
+  if (NOTIFY_EMAIL && (totalAdded > 0 || skipped > 0)) {
+    var subject = skipped > 0
+      ? 'Dana list: ACTION NEEDED - ' + skipped + ' bank row(s) not imported'
+      : 'Dana list: ' + totalAdded + ' new bank row(s)';
+    MailApp.sendEmail(NOTIFY_EMAIL, subject, summary);
   }
 }
 
