@@ -22,3 +22,6 @@ posted_*.xlsx
 
 # User list (names + password hashes) - lives in the private de-penang-users repo
 users.yaml
+
+# Sheet backups - contain donor names, phone numbers and amounts
+backups/
