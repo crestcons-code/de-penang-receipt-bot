@@ -19,7 +19,7 @@
  *   2. Fill in SHEET_ID below (the long code in your dana list's URL)
  *   3. Run  importMaybankCsv  once and approve the permission prompt.
  *      Check the log, and check the sheet looks right.
- *   4. Run  createDailyTrigger  once to schedule it every morning.
+ *   4. Run  createDailyTrigger  once to schedule it (around 11:55am daily).
  */
 
 // The long code in your dana list URL: .../spreadsheets/d/THIS_PART/edit
@@ -293,13 +293,15 @@ function log_(msg) {
   console.log(msg);
 }
 
-/** Run this ONCE to schedule the import every morning. */
+/** Run this ONCE to schedule the import (around 11:55am daily). */
 function createDailyTrigger() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'importMaybankCsv') ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger('importMaybankCsv').timeBased().atHour(7).everyDays(1).create();
-  Logger.log('Daily import scheduled for around 7am.');
+  // nearMinute is the finest control a daily trigger allows - Google still
+  // applies up to 15 minutes of jitter, so this runs roughly 11:40-12:10.
+  ScriptApp.newTrigger('importMaybankCsv').timeBased().atHour(11).nearMinute(55).everyDays(1).create();
+  Logger.log('Daily import scheduled for around 11:55am.');
 }
 
 /**
