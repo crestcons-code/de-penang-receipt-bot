@@ -70,14 +70,17 @@ NEVER RETURN THE RECIPIENT AS THE DONOR. Every slip shows the temple as the part
 "PERSATUAN DHAMMA MALAYSIA", "Dhamma Earth Penang", or a Maybank account like 507013883446 /
 5-0701-388344-6. That is who RECEIVED the money, and it is never the donor.
 
-Look for the donor in this order:
-  1. a name given in the WhatsApp message or conversation screenshot. In a GROUP chat every
-     incoming message carries its sender's name above it, usually in colour (e.g. "Poey Hang Ai"
-     above a message containing a slip). That sender IS the donor for the file they sent - use
-     it even when the message text adds nothing but a greeting or repeats the name. Messages on
-     the temple's own side are replies, not donations;
-  2. the payer/sender/"From" name on the slip;
-  3. the free-text reference the donor typed - fields called "Recipient Reference", "Payment
+Look for the donor in this order, and STOP at the first one that yields a name:
+  1. THE NAME WRITTEN IN THE MESSAGE SENT WITH THE SLIP. This outranks everything else. If the
+     message accompanying the slip says "Chiayee & family" then the donor is "Chiayee & family",
+     even when the chat header or the sender label says something different like "DE Chia Yee" -
+     that is only how the temple happens to have saved the contact, whereas the donor wrote the
+     name they want on the receipt. Copy what they wrote, including any "& family";
+  2. only if no name is written in the message: the sender's name shown above the message. In a
+     GROUP chat each incoming message carries its sender's name above it, usually in colour
+     (e.g. "Poey Hang Ai"). Messages on the temple's own side are replies, not donations;
+  3. the payer/sender/"From" name on the slip;
+  4. the free-text reference the donor typed - fields called "Recipient Reference", "Payment
      Details", "Payment Reference" or similar. Donors here routinely put their own name there
      (e.g. Recipient Reference "Ooi soo yee" means the donor is Ooi soo yee), so use it when it
      reads like a person's or family's name.
