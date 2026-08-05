@@ -185,6 +185,28 @@ GL_OPTIONS = {f"{code}  {desc}": code for code, desc, _ in DONATION_MAP}
 # Reverse lookup: GL code â+' short description
 GL_SHORT_DESC = {code: desc for code, desc, _ in DONATION_MAP}
 
+# Drive folder volunteers bulk-share WhatsApp slips into
+SLIP_FOLDER_NAME = "DEP dana Slip"
+try:
+    SLIP_FOLDER_NAME = st.secrets.get("SLIP_FOLDER_NAME", SLIP_FOLDER_NAME)
+except Exception:
+    pass
+
+
+class _DriveSlip:
+    """
+    Minimal stand-in for Streamlit's UploadedFile so a slip fetched from Drive
+    flows through exactly the same code as one picked off a volunteer's PC.
+    """
+
+    def __init__(self, name: str, data: bytes, drive_id: str = ""):
+        self.name = name
+        self._data = data
+        self.drive_id = drive_id
+
+    def getvalue(self) -> bytes:
+        return self._data
+
 
 def _parse_amount(val) -> float:
     """Parse 'RM 30.00' or '30.00' to float. Blank/dash/non-numeric cells become 0.0."""
@@ -1890,6 +1912,7 @@ with tab_entry:
         from google_sheets_client import find_unfilled_rows as gs_find_unfilled_rows
         from google_sheets_client import write_donor_details as gs_write_donor_details
         from google_sheets_client import build_donor_phone_book as gs_build_phone_book
+        from google_sheets_client import add_processed_slip_ids as gs_add_processed
 
         _gs_cfg_entry = get_google_sheets_config()
         _target_tab = None
@@ -1921,10 +1944,62 @@ with tab_entry:
                     st.rerun()
 
         st.divider()
-        uploaded_slips = st.file_uploader(
-            "Upload slip images or PDFs (select multiple at once)",
-            type=["png", "jpg", "jpeg", "pdf"], accept_multiple_files=True, key="slip_uploads",
-        )
+
+        # A slip can come from the volunteer's PC or straight from the shared
+        # Drive folder they bulk-share WhatsApp attachments into, which saves
+        # downloading each file and re-uploading it here.
+        _slip_source = st.radio("Slip source:", ["Google Drive folder", "Upload from this device"],
+                                horizontal=True, key="slip_source")
+
+        uploaded_slips = []
+        _drive_files = []          # parallel list of Drive metadata, when using Drive
+
+        if _slip_source == "Upload from this device":
+            uploaded_slips = st.file_uploader(
+                "Upload slip images or PDFs (select multiple at once)",
+                type=["png", "jpg", "jpeg", "pdf"], accept_multiple_files=True, key="slip_uploads",
+            ) or []
+        else:
+            try:
+                import drive_slips as _ds
+                from google_sheets_client import get_processed_slip_ids as _gs_processed
+                _dsvc = _ds.get_service(_gs_cfg_entry["service_account_info"])
+                _folder_id = _ds.find_folder(_dsvc, SLIP_FOLDER_NAME)
+                if not _folder_id:
+                    st.warning(
+                        f"Can't see a Drive folder named **{SLIP_FOLDER_NAME}**. Share it with "
+                        f"`{_gs_cfg_entry['service_account_info'].get('client_email','the service account')}` "
+                        "(right-click the folder in Drive → Share), then reload this page."
+                    )
+                else:
+                    _all = _ds.list_slips(_dsvc, _folder_id)
+                    _done = _gs_processed(_entry_client, _gs_cfg_entry["spreadsheet_id"])
+                    _pending = [f for f in _all if f["id"] not in _done]
+                    c1, c2 = st.columns([3, 1])
+                    c1.caption(f"📁 {SLIP_FOLDER_NAME}: {len(_all)} slip file(s), "
+                               f"{len(_all) - len(_pending)} already processed, **{len(_pending)} pending**.")
+                    if c2.button("🔄 Refresh folder", key="refresh_drive_slips"):
+                        st.rerun()
+
+                    if _pending:
+                        _picked = st.multiselect(
+                            "Slips to work on (newest last)",
+                            options=[f["id"] for f in _pending],
+                            default=[f["id"] for f in _pending],
+                            format_func=lambda i: next(f["name"] for f in _pending if f["id"] == i),
+                            key="drive_slip_pick",
+                        )
+                        _by_id = {f["id"]: f for f in _pending}
+                        with st.spinner("Fetching slips from Drive..."):
+                            for _fid in _picked:
+                                _meta = _by_id[_fid]
+                                _blob = _ds.download(_dsvc, _fid)
+                                uploaded_slips.append(_DriveSlip(_meta["name"], _blob, _fid))
+                                _drive_files.append(_meta)
+                    else:
+                        st.success("Nothing pending — every slip in that folder has been processed.")
+            except Exception as e:
+                st.error(f"Could not read the Drive folder: {e}")
 
         if uploaded_slips:
             st.caption(
@@ -1949,7 +2024,7 @@ with tab_entry:
                         st.markdown(f"📄 **{slip.name}**")
                         st.caption("PDF file (preview not shown, will still be read by AI)")
                     else:
-                        st.image(slip, caption=slip.name, use_container_width=True)
+                        st.image(slip.getvalue(), caption=slip.name, use_container_width=True)
 
                 attach_to_prev = False
                 with col_txt:
@@ -2001,6 +2076,7 @@ with tab_entry:
                             _files.append({"bytes": s.getvalue(), "media_type": mt, "name": s.name})
                         result = extract_donation_multi(_api_key, _files, txt)
                         result["_source_file"] = source_label
+                        result["_drive_ids"] = [s_.drive_id for s_ in slips if getattr(s_, "drive_id", "")]
                         result["_error"] = ""
                         # If no mobile was found in the WhatsApp text, look up the
                         # donor against past months' records - the same person often
@@ -2025,7 +2101,8 @@ with tab_entry:
                     except Exception as e:
                         result = {"date": "", "amount": 0.0, "donors": [], "description": "",
                                   "mobile": "", "confidence": "low", "notes": "",
-                                  "_source_file": source_label, "_error": str(e)}
+                                  "_source_file": source_label, "_error": str(e),
+                                  "_drive_ids": [s_.drive_id for s_ in slips if getattr(s_, "drive_id", "")]}
                     extracted.append(result)
                     progress.progress((gi + 1) / len(groups))
                 st.session_state["entry_extracted"] = extracted
@@ -2192,6 +2269,25 @@ with tab_entry:
                                 ]),
                                 use_container_width=True, hide_index=True,
                             )
+                        # Mark Drive slips done so they drop off the pending list.
+                        # Only rows that actually got written - a slip whose row was
+                        # a conflict must stay pending, or it would silently vanish
+                        # from the folder view having never been recorded.
+                        _written_rows = set(row_details) - set(_dd_conflicts)
+                        _proc = []
+                        for _idx, _r in to_confirm.iterrows():
+                            if int(_r["Target Sheet Row"]) not in _written_rows:
+                                continue
+                            for _fid in (extracted[_idx].get("_drive_ids") or []):
+                                _proc.append((_fid, extracted[_idx].get("_source_file", ""),
+                                              int(_r["Target Sheet Row"])))
+                        if _proc:
+                            try:
+                                gs_add_processed(gs_write_client, _gs_cfg_entry["spreadsheet_id"], _proc)
+                                st.caption(f"{len(_proc)} Drive slip(s) marked as processed.")
+                            except Exception as _e:
+                                st.warning(f"Rows were written, but marking slips processed failed: {_e}")
+
                         if not _dd_conflicts:
                             del st.session_state["entry_extracted"]
                             del st.session_state["entry_match_index"]

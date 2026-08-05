@@ -310,3 +310,43 @@ def build_donor_phone_book(client: gspread.Client, spreadsheet_id: str,
             if donor and mobile:
                 phone_by_donor[donor] = mobile   # later tabs overwrite earlier ones
     return list(phone_by_donor.items())
+
+
+# Tab used to remember which Drive slip files have already been processed, so a
+# volunteer reopening the folder doesn't redo them. Kept in the spreadsheet
+# rather than by moving files, so the app needs no write access to Drive and
+# never disturbs the volunteers' own folder.
+PROCESSED_SLIPS_TAB = "_processed_slips"
+
+
+def get_processed_slip_ids(client: gspread.Client, spreadsheet_id: str) -> set:
+    """Return the set of Drive file ids already handled. Empty if never used."""
+    sh = client.open_by_key(spreadsheet_id)
+    try:
+        ws = sh.worksheet(PROCESSED_SLIPS_TAB)
+    except gspread.WorksheetNotFound:
+        return set()
+    return {r[0].strip() for r in ws.get_all_values()[1:] if r and r[0].strip()}
+
+
+def add_processed_slip_ids(client: gspread.Client, spreadsheet_id: str, entries: list) -> None:
+    """
+    Record slips as processed. entries: list of (file_id, file_name, sheet_row).
+    Creates the tab on first use. Existing ids are not written again.
+    """
+    if not entries:
+        return
+    sh = client.open_by_key(spreadsheet_id)
+    try:
+        ws = sh.worksheet(PROCESSED_SLIPS_TAB)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=PROCESSED_SLIPS_TAB, rows=1000, cols=4)
+        ws.update([["Drive file id", "File name", "Filled sheet row", "Processed at"]],
+                  value_input_option="USER_ENTERED")
+
+    known = {r[0].strip() for r in ws.get_all_values()[1:] if r and r[0].strip()}
+    import datetime as _dt
+    stamp = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    rows = [[fid, name, str(row), stamp] for fid, name, row in entries if fid not in known]
+    if rows:
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
