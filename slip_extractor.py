@@ -88,6 +88,15 @@ If none of those yields a name, return an empty "donors" list rather than fallin
 recipient - a blank donor prompts a volunteer to fill it in, whereas the temple's own name on a
 receipt is a mistake that gets printed and posted out.
 
+NEVER INVENT A DESCRIPTION. "description" is the PURPOSE of the donation - what the money is
+for (e.g. "Monthly Dana", "TCM", "Kathina - Road Construction RC G13", "SyKuti Building Fund").
+Take it only from what the donor actually wrote: their message, or the slip's reference/payment
+details field. If neither states a purpose, return "" - do NOT write filler like "Donation to
+Persatuan Dhamma Malaysia" or "Fund transfer to the temple". That only restates who was paid,
+adds nothing, and looks like real information to the volunteer reading it. A blank description
+correctly tells them there is nothing to go on. Also do not copy the donor's own name into the
+description when it is only being used to identify them.
+
 NEVER GUESS THE DATE. Use only a date actually printed on the slip as the transaction date.
 Do NOT derive it from a file name, reference number or document ID - a reference like
 "MY-230922783" is not a date, and inventing "2023-09-22" from it produces a receipt that can
