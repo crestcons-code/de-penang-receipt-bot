@@ -35,7 +35,19 @@ Extract the following and return ONLY a single JSON object, no other text:
                    belongs to and MUST NOT be dropped)",
   "mobile": "012-3456789 or empty string if not stated",
   "confidence": "high|medium|low",   // your confidence that date+amount were read correctly
-  "notes": "anything unclear or that needs human review, empty string if none"
+  "notes": "anything unclear or that needs human review, empty string if none",
+  "source_kind": "bank_slip | chat_screenshot | other",
+      // "bank_slip"        = the bank's own transfer receipt/confirmation (any bank).
+      // "chat_screenshot"  = a screenshot of a WhatsApp/messaging conversation. These
+      //                      show messages, a contact name at the top, chat bubbles.
+      //                      A chat screenshot may CONTAIN a small preview of a slip -
+      //                      it is still a chat_screenshot.
+      // "other"            = anything else.
+  "attachment_filename": "..."
+      // ONLY for chat_screenshot: if the conversation shows a file attachment, copy its
+      // displayed file name EXACTLY as shown (e.g. "CIMB OCTO MY-230922783.pdf").
+      // This is how a screenshot gets linked to the slip file it refers to, so copy it
+      // character for character and do not tidy or shorten it. "" if none is visible.
 }
 
 If the slip is blurry/unclear on date or amount, still give your best reading and set
@@ -53,6 +65,25 @@ source is trusted for different things:
   - the CONVERSATION or message text is authoritative for the donor name(s) and the purpose
 A chat screenshot does not show the transaction date (it shows when the message was sent, or just
 "Today"), so never take the date from it.
+
+NEVER RETURN THE RECIPIENT AS THE DONOR. Every slip shows the temple as the party being paid -
+"PERSATUAN DHAMMA MALAYSIA", "Dhamma Earth Penang", or a Maybank account like 507013883446 /
+5-0701-388344-6. That is who RECEIVED the money, and it is never the donor.
+
+Look for the donor in this order:
+  1. a name given in the WhatsApp message or conversation screenshot. In a GROUP chat every
+     incoming message carries its sender's name above it, usually in colour (e.g. "Poey Hang Ai"
+     above a message containing a slip). That sender IS the donor for the file they sent - use
+     it even when the message text adds nothing but a greeting or repeats the name. Messages on
+     the temple's own side are replies, not donations;
+  2. the payer/sender/"From" name on the slip;
+  3. the free-text reference the donor typed - fields called "Recipient Reference", "Payment
+     Details", "Payment Reference" or similar. Donors here routinely put their own name there
+     (e.g. Recipient Reference "Ooi soo yee" means the donor is Ooi soo yee), so use it when it
+     reads like a person's or family's name.
+If none of those yields a name, return an empty "donors" list rather than falling back to the
+recipient - a blank donor prompts a volunteer to fill it in, whereas the temple's own name on a
+receipt is a mistake that gets printed and posted out.
 
 NEVER GUESS THE DATE. Use only a date actually printed on the slip as the transaction date.
 Do NOT derive it from a file name, reference number or document ID - a reference like
@@ -83,6 +114,50 @@ def _get_client(api_key: str) -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=api_key)
 
 
+def read_attachment_names(api_key: str, file_bytes: bytes, media_type: str) -> list:
+    """
+    Ask one narrow question: which file attachment does this chat screenshot show?
+
+    The main extraction already reports this, but inconsistently - it is one field
+    among a dozen and gets missed. Pairing a screenshot to its slip depends on it,
+    so screenshots that come back without one are asked again on their own, where
+    the answer is far more reliable.
+
+    Returns a LIST - a screenshot can show more than one attachment, and long
+    digit runs in bank file names are often misread, so the caller matches these
+    against the real file names fuzzily rather than trusting them literally.
+    """
+    client = _get_client(api_key)
+    block_type = "document" if media_type == "application/pdf" else "image"
+    msg = client.messages.create(
+        model=MODEL,
+        max_tokens=100,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": block_type, "source": {"type": "base64", "media_type": media_type,
+                                                "data": base64.b64encode(file_bytes).decode()}},
+                {"type": "text", "text":
+                    "This is a screenshot of a messaging app. List the file name of EVERY file "
+                    "attachment shown (a PDF or image card with a file name under or beside it), "
+                    "exactly as displayed, including the extension - one per line, nothing else. "
+                    "If no attached file name is visible, reply with only: NONE"},
+            ],
+        }],
+    )
+    out = msg.content[0].text.strip()
+    if not out or out.upper().startswith("NONE"):
+        return []
+    names = []
+    for line in out.splitlines():
+        line = line.strip().strip('"').lstrip("-*• ").strip()
+        # A real file name is short and carries an extension; anything else is
+        # the model explaining itself, which must not reach the matcher.
+        if line and "." in line and len(line) <= 120:
+            names.append(line)
+    return names
+
+
 def extract_donation(api_key: str, file_bytes: bytes, media_type: str,
                      whatsapp_text: str) -> dict:
     """
@@ -94,13 +169,20 @@ def extract_donation(api_key: str, file_bytes: bytes, media_type: str,
         api_key, [{"bytes": file_bytes, "media_type": media_type, "name": ""}], whatsapp_text)
 
 
-def extract_donation_multi(api_key: str, files: list, whatsapp_text: str) -> dict:
+def extract_donation_multi(api_key: str, files: list, whatsapp_text: str,
+                           primary_name: str = "") -> dict:
     """
     Read ONE donation that may be spread across several attachments - typically
     the bank slip plus a screenshot of the donor's WhatsApp message naming them.
 
     files: list of {"bytes": b"...", "media_type": "image/jpeg"|"image/png"|
                     "application/pdf", "name": "optional filename"}
+    primary_name: file name of the bank slip this call is about. Worth passing
+    whenever a screenshot is included: group-chat screenshots routinely show
+    several people's donations at once, and without knowing which attachment is
+    being asked about the model cannot tell whose message belongs to this slip -
+    it then (correctly, but unhelpfully) returns no donor at all.
+
     All files are treated as evidence for a SINGLE donation, not several.
     """
     if not files:
@@ -145,4 +227,9 @@ def extract_donation_multi(api_key: str, files: list, whatsapp_text: str) -> dic
     data.setdefault("mobile", "")
     data.setdefault("confidence", "low")
     data.setdefault("notes", "")
+    data.setdefault("source_kind", "other")
+    data.setdefault("attachment_filename", "")
+    # A donor entry with a blank name is noise - it renders as " RM50" in the
+    # review table and can't be receipted to anyone.
+    data["donors"] = [d for d in data["donors"] if str(d.get("name", "")).strip()]
     return data

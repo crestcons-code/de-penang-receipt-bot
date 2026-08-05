@@ -1905,7 +1905,8 @@ with tab_entry:
         st.info("This feature isn't set up yet. Ask your developer to configure the Anthropic API key.")
     else:
         try:
-            from slip_extractor import extract_donation, extract_donation_multi
+            from slip_extractor import extract_donation, extract_donation_multi, read_attachment_names
+            from slip_pairing import pair_slips, merge_group
         except ImportError as e:
             st.error(f"Could not load the AI extraction module: {e}")
             st.stop()
@@ -2012,11 +2013,11 @@ with tab_entry:
                     "is used for the donor name. A chat screenshot alone can't supply the date — "
                     "it isn't shown in the conversation.")
 
-            # Group consecutive files into donations. Default: each file is its own
-            # donation (the old behaviour). Ticking the box merges a file into the
-            # group above it, which reads naturally top-to-bottom and avoids making
-            # volunteers manage group numbers.
-            groups = []          # list of {"files": [uploaded...], "index": int}
+            # Each file is previewed with an optional text box. Files are NOT
+            # grouped by hand any more - slips and their chat screenshots are
+            # paired automatically after reading (see slip_pairing.pair_slips),
+            # because ticking pairs by hand doesn't scale to a large batch and
+            # depends on upload order the volunteer can't control.
             for i, slip in enumerate(uploaded_slips):
                 col_img, col_txt = st.columns([1, 2])
                 with col_img:
@@ -2025,30 +2026,15 @@ with tab_entry:
                         st.caption("PDF file (preview not shown, will still be read by AI)")
                     else:
                         st.image(slip.getvalue(), caption=slip.name, use_container_width=True)
-
-                attach_to_prev = False
                 with col_txt:
-                    if i > 0:
-                        attach_to_prev = st.checkbox(
-                            "↳ Part of the donation above (same donor, e.g. slip + name screenshot)",
-                            key=f"slip_attach_{i}")
-                    if attach_to_prev:
-                        st.caption("Will be read together with the file(s) above as one donation.")
-                    else:
-                        st.text_area(
-                            f"WhatsApp text for donation {len(groups) + 1} (optional if a screenshot shows it)",
-                            key=f"slip_wa_text_{i}", height=150,
-                            placeholder="Paste the donor's WhatsApp message here (names, purpose, etc.)")
-
-                if attach_to_prev and groups:
-                    groups[-1]["files"].append(slip)
-                else:
-                    groups.append({"files": [slip], "index": i})
+                    st.text_area(
+                        f"Extra text for {slip.name} (optional)",
+                        key=f"slip_wa_text_{i}", height=120,
+                        placeholder="Usually not needed - a chat screenshot already carries the "
+                                    "donor's message. Paste here only if something is missing.")
                 st.divider()
 
-            _n = len(groups)
-            _label = f"🔍 Process Batch ({_n} donation{'s' if _n != 1 else ''}" + \
-                     (f" from {len(uploaded_slips)} files)" if len(uploaded_slips) != _n else ")")
+            _label = f"🔍 Read & Auto-Pair ({len(uploaded_slips)} file(s))"
             if st.button(_label, type="primary", disabled=not _target_tab):
                 if "entry_phone_book" not in st.session_state:
                     with st.spinner("Building donor phone lookup from past months..."):
@@ -2057,54 +2043,105 @@ with tab_entry:
                 phone_book = st.session_state["entry_phone_book"]
                 phone_choices = [p[0] for p in phone_book]
 
-                extracted = []
+                # Read every file on its own first, then work out which chat
+                # screenshot belongs to which slip. Reading them separately is what
+                # makes automatic pairing possible: each file reports what it is
+                # and, for a screenshot, the attachment name it shows.
+                per_file = []
+                file_payload = {}      # file index -> {bytes, media_type, name}
                 progress = st.progress(0)
-                for gi, group in enumerate(groups):
-                    slips = group["files"]
-                    txt = st.session_state.get(f"slip_wa_text_{group['index']}", "")
-                    source_label = ", ".join(s.name for s in slips)
-                    try:
-                        _files = []
-                        for s in slips:
-                            _nl = s.name.lower()
-                            if _nl.endswith(".pdf"):
-                                mt = "application/pdf"
-                            elif _nl.endswith(".png"):
-                                mt = "image/png"
-                            else:
-                                mt = "image/jpeg"
-                            _files.append({"bytes": s.getvalue(), "media_type": mt, "name": s.name})
-                        result = extract_donation_multi(_api_key, _files, txt)
-                        result["_source_file"] = source_label
-                        result["_drive_ids"] = [s_.drive_id for s_ in slips if getattr(s_, "drive_id", "")]
-                        result["_error"] = ""
-                        # If no mobile was found in the WhatsApp text, look up the
-                        # donor against past months' records - the same person often
-                        # donates repeatedly and their number is likely on file already
-                        if not result.get("mobile") and phone_choices:
-                            donor_names = [d.get("name", "") for d in result.get("donors", []) if d.get("name")]
-                            for dn in donor_names:
-                                # High cutoff deliberately - a wrong phone suggestion is worse
-                                # than no suggestion (tested: 85 gave false positives on
-                                # unrelated names sharing a common word; 92 only fires on
-                                # near-exact/exact name matches). processor=default_process
-                                # is REQUIRED - without it, case differences alone (e.g.
-                                # "Lim Poh Tee" vs "LIM POH TEE") tank the score to ~45.
-                                match = process.extractOne(dn, phone_choices, scorer=fuzz.WRatio,
-                                                           processor=fuzz_utils.default_process, score_cutoff=92)
-                                if match:
-                                    matched_text, score, m_idx = match
-                                    result["mobile"] = phone_book[m_idx][1]
-                                    result["notes"] = (result.get("notes", "") + " | " if result.get("notes") else "") + \
-                                        f"Mobile suggested from past donor record '{matched_text}' (score {score:.0f}) - please verify"
-                                    break
-                    except Exception as e:
-                        result = {"date": "", "amount": 0.0, "donors": [], "description": "",
-                                  "mobile": "", "confidence": "low", "notes": "",
-                                  "_source_file": source_label, "_error": str(e),
-                                  "_drive_ids": [s_.drive_id for s_ in slips if getattr(s_, "drive_id", "")]}
+                for fi, slip in enumerate(uploaded_slips):
+                    _nl = slip.name.lower()
+                    if _nl.endswith(".pdf"):
+                        mt = "application/pdf"
+                    elif _nl.endswith(".png"):
+                        mt = "image/png"
+                    else:
+                        mt = "image/jpeg"
+                    txt = st.session_state.get(f"slip_wa_text_{fi}", "")
+                    r, last_err = None, ""
+                    # Retry: a transient API error on one file would otherwise make it
+                    # look like an unrecognised document and break its pairing.
+                    for _attempt in range(3):
+                        try:
+                            r = extract_donation(_api_key, slip.getvalue(), mt, txt)
+                            break
+                        except Exception as e:
+                            last_err = str(e)
+                            time.sleep(1.5 * (_attempt + 1))
+                    if r is None:
+                        r = {"date": "", "amount": 0.0, "donors": [], "description": "",
+                             "mobile": "", "confidence": "low", "notes": "",
+                             "source_kind": "other", "attachment_filename": "",
+                             "_error": last_err}
+                    else:
+                        r["_error"] = ""
+                    r["_name"] = slip.name
+                    r["_index"] = fi
+                    r["_drive_id"] = getattr(slip, "drive_id", "")
+                    file_payload[fi] = {"bytes": slip.getvalue(), "media_type": mt, "name": slip.name}
+                    # Pairing depends on the attachment name a screenshot shows, and
+                    # the main extraction reports it only sometimes - it's one field
+                    # among many. Ask again, on its own, where the answer is reliable.
+                    if r.get("source_kind") == "chat_screenshot" and not r.get("attachment_filename"):
+                        try:
+                            r["attachment_filenames"] = read_attachment_names(_api_key, slip.getvalue(), mt)
+                        except Exception:
+                            r["attachment_filenames"] = []
+
+                    per_file.append(r)
+                    progress.progress((fi + 1) / len(uploaded_slips))
+
+                _groups, _pair_notes = pair_slips(per_file)
+                st.session_state["entry_pair_notes"] = _pair_notes
+
+                extracted = []
+                for g in _groups:
+                    result = merge_group(g)
+                    result.setdefault("_error", "")
+
+                    # A paired group is re-read with the slip and its screenshot in
+                    # the SAME call. Merging two independent reads was measurably
+                    # less stable - the donor name came and went between runs -
+                    # because neither read can see what the other saw.
+                    if g.get("slip") and g.get("screenshots"):
+                        _payload = [file_payload[f["_index"]]
+                                    for f in [g["slip"]] + g["screenshots"]
+                                    if f.get("_index") in file_payload]
+                        if len(_payload) > 1:
+                            try:
+                                _combined = extract_donation_multi(
+                                    _api_key, _payload, "",
+                                    primary_name=g["slip"].get("_name", ""))
+                                for _k in ("date", "amount", "donors", "description",
+                                           "mobile", "confidence", "notes"):
+                                    if _k in _combined:
+                                        result[_k] = _combined[_k]
+                            except Exception as _e:
+                                result["notes"] = (result.get("notes", "") + " | " if result.get("notes") else "") +                                     f"Combined re-read failed ({_e}); using per-file reading"
+
+                    # If no mobile came from the slip or the conversation, look the
+                    # donor up in past months' records - the same people donate
+                    # repeatedly and their number is usually already on file.
+                    if not result.get("mobile") and phone_choices:
+                        donor_names = [d.get("name", "") for d in result.get("donors", []) if d.get("name")]
+                        for dn in donor_names:
+                            # High cutoff deliberately - a wrong phone suggestion is worse
+                            # than no suggestion (tested: 85 gave false positives on
+                            # unrelated names sharing a common word; 92 only fires on
+                            # near-exact/exact name matches). processor=default_process
+                            # is REQUIRED - without it, case differences alone (e.g.
+                            # "Lim Poh Tee" vs "LIM POH TEE") tank the score to ~45.
+                            match = process.extractOne(dn, phone_choices, scorer=fuzz.WRatio,
+                                                       processor=fuzz_utils.default_process, score_cutoff=92)
+                            if match:
+                                matched_text, score, m_idx = match
+                                result["mobile"] = phone_book[m_idx][1]
+                                result["notes"] = (result.get("notes", "") + " | " if result.get("notes") else "") +                                     f"Mobile suggested from past donor record '{matched_text}' (score {score:.0f}) - please verify"
+                                break
+
                     extracted.append(result)
-                    progress.progress((gi + 1) / len(groups))
+
                 st.session_state["entry_extracted"] = extracted
                 # Build the match index fresh each run, and consume candidates as we
                 # auto-match so two slips with the same date+amount don't both claim
@@ -2124,6 +2161,15 @@ with tab_entry:
             st.divider()
             st.subheader("Review & Confirm")
             st.caption("Matched Row = already done, skipped. Target Row = where this will be written.")
+
+            _pn = st.session_state.get("entry_pair_notes") or []
+            if _pn:
+                with st.expander(f"🔗 Auto-pairing: {len(_pn)} decision(s) - check these", expanded=False):
+                    for _n in _pn:
+                        st.write("- " + _n)
+                    st.caption("A slip and its chat screenshot are paired when the screenshot shows "
+                               "that file's name, or when they are the only pair sharing an amount. "
+                               "Anything ambiguous is left unpaired rather than guessed.")
 
             review_rows = []
             for r in extracted:
