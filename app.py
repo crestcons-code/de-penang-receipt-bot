@@ -2211,6 +2211,7 @@ with tab_entry:
                 matched_row = None
                 already_row = None
                 match_note = ""
+                suggested_donor = ""
                 donor_query = " ".join(d.get("name", "") for d in donors) or donor_text
                 if not r.get("_error") and r.get("date"):
                     key = (r["date"], round(float(r.get("amount", 0) or 0), 2))
@@ -2239,6 +2240,21 @@ with tab_entry:
                                            if donor_query and haystack.strip() else 0
                             if sanity_score >= 50:
                                 matched_row = candidates.pop(0)["row"]
+                            elif not donor_query:
+                                # Nothing to sanity-check against: some slips show no
+                                # sender at all (Maybank third-party transfers in
+                                # particular give only beneficiary, reference, amount).
+                                # Refusing was wrong - this is the ONLY unfilled row with
+                                # that exact date and amount, and the bank row itself
+                                # carries the payer name, which is the very thing the
+                                # slip was missing.
+                                matched_row = candidates.pop(0)["row"]
+                                _bank_name = str(only_c.get("beneficiary") or "").strip().rstrip("*").strip()
+                                if _bank_name:
+                                    suggested_donor = _bank_name
+                                    match_note = f"Matched on date+amount; donor taken from the bank row ({_bank_name}) - verify"
+                                else:
+                                    match_note = "Matched on date+amount only (slip names no donor) - verify"
                             else:
                                 match_note = f"Low match (row {only_c['row']}, score {sanity_score:.0f}) - verify"
                         elif len(candidates) > 1:
@@ -2262,6 +2278,11 @@ with tab_entry:
                                 match_note = f"Ambiguous: rows {rows_list} - pick one"
                         else:
                             match_note = "No unfilled row found"
+
+                # A slip with no readable donor can still be identified by the bank
+                # row it matched - that row came from the statement and names the payer.
+                if suggested_donor and not donor_text:
+                    donor_text = suggested_donor
 
                 review_rows.append({
                     "Include":          not r.get("_error") and matched_row is not None and already_row is None,
