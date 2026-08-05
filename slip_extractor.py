@@ -44,6 +44,19 @@ shows a different name (e.g. slip shows the payer's bank name, WhatsApp gives th
 prefer the WhatsApp-stated donor name for "donors" - the bank name alone belongs in the slip's
 sender field, not necessarily the donor being credited.
 
+NEVER GUESS THE DATE. Use only a date actually printed on the slip as the transaction date.
+Do NOT derive it from a file name, reference number or document ID - a reference like
+"MY-230922783" is not a date, and inventing "2023-09-22" from it produces a receipt that can
+never be matched to the bank statement. If the slip shows no readable date, return "" for date
+and set confidence to "low"; a missing date is recoverable, a wrong one is not.
+
+PHONE NUMBERS - only ever return a number that clearly belongs to the DONOR. The image may be a
+screenshot of a WhatsApp conversation that includes the temple's OWN reply, which typically
+carries a contact number ("Please contact 01X-XXXXXXX for any enquiries"), a signature, or the
+temple's name. Never take a number from the temple's side of the conversation - it would be
+filed as the donor's number and the receipt would never reach them. If the only number visible
+belongs to the temple or you are unsure whose it is, return "".
+
 IMPORTANT - group transfers: the slip's own "Payee reference" / "Other transfer details" field
 often just carries a group label or collector's name (e.g. "RC G13 Kam Loong group for road
 construction") for a transfer that bundles MANY individual donors' contributions together. When
