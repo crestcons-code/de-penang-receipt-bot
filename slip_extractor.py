@@ -44,6 +44,16 @@ shows a different name (e.g. slip shows the payer's bank name, WhatsApp gives th
 prefer the WhatsApp-stated donor name for "donors" - the bank name alone belongs in the slip's
 sender field, not necessarily the donor being credited.
 
+YOU MAY BE GIVEN SEVERAL ATTACHMENTS FOR ONE DONATION - typically the bank slip itself plus a
+screenshot of the WhatsApp conversation where the donor gives their name (donors often send the
+slip and their name as two separate messages). Treat them together as evidence for a SINGLE
+donation, never as separate donations, and return one JSON object covering all of them. Each
+source is trusted for different things:
+  - the BANK SLIP is authoritative for the transaction date and the amount
+  - the CONVERSATION or message text is authoritative for the donor name(s) and the purpose
+A chat screenshot does not show the transaction date (it shows when the message was sent, or just
+"Today"), so never take the date from it.
+
 NEVER GUESS THE DATE. Use only a date actually printed on the slip as the transaction date.
 Do NOT derive it from a file name, reference number or document ID - a reference like
 "MY-230922783" is not a date, and inventing "2023-09-22" from it produces a receipt that can
@@ -80,23 +90,46 @@ def extract_donation(api_key: str, file_bytes: bytes, media_type: str,
     media_type: "image/jpeg", "image/png", or "application/pdf".
     Returns the parsed dict (see EXTRACTION_PROMPT for shape), or raises on failure.
     """
+    return extract_donation_multi(
+        api_key, [{"bytes": file_bytes, "media_type": media_type, "name": ""}], whatsapp_text)
+
+
+def extract_donation_multi(api_key: str, files: list, whatsapp_text: str) -> dict:
+    """
+    Read ONE donation that may be spread across several attachments - typically
+    the bank slip plus a screenshot of the donor's WhatsApp message naming them.
+
+    files: list of {"bytes": b"...", "media_type": "image/jpeg"|"image/png"|
+                    "application/pdf", "name": "optional filename"}
+    All files are treated as evidence for a SINGLE donation, not several.
+    """
+    if not files:
+        raise ValueError("No files given to extract_donation_multi")
+
     client = _get_client(api_key)
-    file_b64 = base64.b64encode(file_bytes).decode()
-    block_type = "document" if media_type == "application/pdf" else "image"
+    content = []
+    for i, f in enumerate(files, start=1):
+        media_type = f["media_type"]
+        block_type = "document" if media_type == "application/pdf" else "image"
+        label = f["name"] or f"file {i}"
+        # Naming each attachment lets the model refer to them in its notes, and
+        # makes the "slip is authoritative for the date" rule easier to apply.
+        content.append({"type": "text", "text": f"Attachment {i}: {label}"})
+        content.append({
+            "type": block_type,
+            "source": {"type": "base64", "media_type": media_type,
+                       "data": base64.b64encode(f["bytes"]).decode()},
+        })
+
+    content.append({
+        "type": "text",
+        "text": f"WhatsApp message text from donor:\n{whatsapp_text or '(none provided)'}\n\n{EXTRACTION_PROMPT}",
+    })
 
     message = client.messages.create(
         model=MODEL,
         max_tokens=1024,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": block_type, "source": {"type": "base64", "media_type": media_type,
-                                                     "data": file_b64}},
-                    {"type": "text", "text": f"WhatsApp message text from donor:\n{whatsapp_text or '(none provided)'}\n\n{EXTRACTION_PROMPT}"},
-                ],
-            }
-        ],
+        messages=[{"role": "user", "content": content}],
     )
 
     text = message.content[0].text.strip()

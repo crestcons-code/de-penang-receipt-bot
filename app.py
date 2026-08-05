@@ -1883,7 +1883,7 @@ with tab_entry:
         st.info("This feature isn't set up yet. Ask your developer to configure the Anthropic API key.")
     else:
         try:
-            from slip_extractor import extract_donation
+            from slip_extractor import extract_donation, extract_donation_multi
         except ImportError as e:
             st.error(f"Could not load the AI extraction module: {e}")
             st.stop()
@@ -1927,8 +1927,21 @@ with tab_entry:
         )
 
         if uploaded_slips:
-            st.caption(f"{len(uploaded_slips)} file(s) uploaded. Paste each donor's WhatsApp text below its slip.")
-            wa_texts = []
+            st.caption(
+                f"{len(uploaded_slips)} file(s) uploaded. One donation per file by default. "
+                "If a donation needs more than one file — e.g. the bank slip plus a screenshot "
+                "of the message naming the donor — tick **“part of the donation above”** on the "
+                "extra file and they'll be read together as one donation."
+            )
+            st.info("The **slip** is used for the date and amount; the **message or screenshot** "
+                    "is used for the donor name. A chat screenshot alone can't supply the date — "
+                    "it isn't shown in the conversation.")
+
+            # Group consecutive files into donations. Default: each file is its own
+            # donation (the old behaviour). Ticking the box merges a file into the
+            # group above it, which reads naturally top-to-bottom and avoids making
+            # volunteers manage group numbers.
+            groups = []          # list of {"files": [uploaded...], "index": int}
             for i, slip in enumerate(uploaded_slips):
                 col_img, col_txt = st.columns([1, 2])
                 with col_img:
@@ -1937,13 +1950,31 @@ with tab_entry:
                         st.caption("PDF file (preview not shown, will still be read by AI)")
                     else:
                         st.image(slip, caption=slip.name, use_container_width=True)
+
+                attach_to_prev = False
                 with col_txt:
-                    txt = st.text_area(f"WhatsApp text for slip {i+1}", key=f"slip_wa_text_{i}", height=150,
-                                       placeholder="Paste the donor's WhatsApp message here (names, purpose, etc.)")
-                    wa_texts.append(txt)
+                    if i > 0:
+                        attach_to_prev = st.checkbox(
+                            "↳ Part of the donation above (same donor, e.g. slip + name screenshot)",
+                            key=f"slip_attach_{i}")
+                    if attach_to_prev:
+                        st.caption("Will be read together with the file(s) above as one donation.")
+                    else:
+                        st.text_area(
+                            f"WhatsApp text for donation {len(groups) + 1} (optional if a screenshot shows it)",
+                            key=f"slip_wa_text_{i}", height=150,
+                            placeholder="Paste the donor's WhatsApp message here (names, purpose, etc.)")
+
+                if attach_to_prev and groups:
+                    groups[-1]["files"].append(slip)
+                else:
+                    groups.append({"files": [slip], "index": i})
                 st.divider()
 
-            if st.button(f"🔍 Process Batch ({len(uploaded_slips)} slip(s))", type="primary", disabled=not _target_tab):
+            _n = len(groups)
+            _label = f"🔍 Process Batch ({_n} donation{'s' if _n != 1 else ''}" + \
+                     (f" from {len(uploaded_slips)} files)" if len(uploaded_slips) != _n else ")")
+            if st.button(_label, type="primary", disabled=not _target_tab):
                 if "entry_phone_book" not in st.session_state:
                     with st.spinner("Building donor phone lookup from past months..."):
                         st.session_state["entry_phone_book"] = gs_build_phone_book(
@@ -1953,18 +1984,23 @@ with tab_entry:
 
                 extracted = []
                 progress = st.progress(0)
-                for i, (slip, txt) in enumerate(zip(uploaded_slips, wa_texts)):
+                for gi, group in enumerate(groups):
+                    slips = group["files"]
+                    txt = st.session_state.get(f"slip_wa_text_{group['index']}", "")
+                    source_label = ", ".join(s.name for s in slips)
                     try:
-                        img_bytes = slip.getvalue()
-                        _name_lower = slip.name.lower()
-                        if _name_lower.endswith(".pdf"):
-                            media_type = "application/pdf"
-                        elif _name_lower.endswith(".png"):
-                            media_type = "image/png"
-                        else:
-                            media_type = "image/jpeg"
-                        result = extract_donation(_api_key, img_bytes, media_type, txt)
-                        result["_source_file"] = slip.name
+                        _files = []
+                        for s in slips:
+                            _nl = s.name.lower()
+                            if _nl.endswith(".pdf"):
+                                mt = "application/pdf"
+                            elif _nl.endswith(".png"):
+                                mt = "image/png"
+                            else:
+                                mt = "image/jpeg"
+                            _files.append({"bytes": s.getvalue(), "media_type": mt, "name": s.name})
+                        result = extract_donation_multi(_api_key, _files, txt)
+                        result["_source_file"] = source_label
                         result["_error"] = ""
                         # If no mobile was found in the WhatsApp text, look up the
                         # donor against past months' records - the same person often
@@ -1989,9 +2025,9 @@ with tab_entry:
                     except Exception as e:
                         result = {"date": "", "amount": 0.0, "donors": [], "description": "",
                                   "mobile": "", "confidence": "low", "notes": "",
-                                  "_source_file": slip.name, "_error": str(e)}
+                                  "_source_file": source_label, "_error": str(e)}
                     extracted.append(result)
-                    progress.progress((i + 1) / len(uploaded_slips))
+                    progress.progress((gi + 1) / len(groups))
                 st.session_state["entry_extracted"] = extracted
                 # Build the match index fresh each run, and consume candidates as we
                 # auto-match so two slips with the same date+amount don't both claim
