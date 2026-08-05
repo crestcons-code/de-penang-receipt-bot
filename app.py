@@ -1905,7 +1905,8 @@ with tab_entry:
         st.info("This feature isn't set up yet. Ask your developer to configure the Anthropic API key.")
     else:
         try:
-            from slip_extractor import extract_donation, extract_donation_multi, read_attachment_names
+            from slip_extractor import (extract_donation, extract_donation_multi,
+                                        read_attachment_names, read_sender_name)
             from slip_pairing import pair_slips, merge_group
         except ImportError as e:
             st.error(f"Could not load the AI extraction module: {e}")
@@ -2080,14 +2081,21 @@ with tab_entry:
                     r["_index"] = fi
                     r["_drive_id"] = getattr(slip, "drive_id", "")
                     file_payload[fi] = {"bytes": slip.getvalue(), "media_type": mt, "name": slip.name}
-                    # Pairing depends on the attachment name a screenshot shows, and
-                    # the main extraction reports it only sometimes - it's one field
-                    # among many. Ask again, on its own, where the answer is reliable.
-                    if r.get("source_kind") == "chat_screenshot" and not r.get("attachment_filename"):
+                    # Pairing depends entirely on the attachment names a screenshot
+                    # shows, so always ask for them in their own narrow call rather
+                    # than relying on the main extraction. Buried among a dozen
+                    # fields it reports them inconsistently, and a group-chat
+                    # screenshot showing two attachments often yielded only one -
+                    # sometimes the one belonging to a different donation, which
+                    # left the real slip unpaired.
+                    if r.get("source_kind") == "chat_screenshot":
                         try:
-                            r["attachment_filenames"] = read_attachment_names(_api_key, slip.getvalue(), mt)
+                            _names = read_attachment_names(_api_key, slip.getvalue(), mt)
                         except Exception:
-                            r["attachment_filenames"] = []
+                            _names = []
+                        if r.get("attachment_filename") and r["attachment_filename"] not in _names:
+                            _names.append(r["attachment_filename"])
+                        r["attachment_filenames"] = _names
 
                     per_file.append(r)
                     progress.progress((fi + 1) / len(uploaded_slips))
@@ -2119,6 +2127,26 @@ with tab_entry:
                                         result[_k] = _combined[_k]
                             except Exception as _e:
                                 result["notes"] = (result.get("notes", "") + " | " if result.get("notes") else "") +                                     f"Combined re-read failed ({_e}); using per-file reading"
+
+                        # Still no donor? In a GROUP chat the name is printed above
+                        # the message rather than written in it, which reads as "no
+                        # donor stated". Ask that one question on its own.
+                        if not result.get("donors"):
+                            _slip_name = g["slip"].get("_name", "")
+                            for _shot in g["screenshots"]:
+                                _p = file_payload.get(_shot.get("_index"))
+                                if not _p:
+                                    continue
+                                try:
+                                    _sender = read_sender_name(_api_key, _p["bytes"],
+                                                               _p["media_type"], _slip_name)
+                                except Exception:
+                                    _sender = ""
+                                if _sender:
+                                    result["donors"] = [{"name": _sender,
+                                                         "amount": result.get("amount", 0)}]
+                                    result["notes"] = (result.get("notes", "") + " | " if result.get("notes") else "") +                                         f"Donor taken from the group-chat sender name '{_sender}' - please verify"
+                                    break
 
                     # If no mobile came from the slip or the conversation, look the
                     # donor up in past months' records - the same people donate

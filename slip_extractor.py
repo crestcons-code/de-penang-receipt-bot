@@ -158,6 +158,47 @@ def read_attachment_names(api_key: str, file_bytes: bytes, media_type: str) -> l
     return names
 
 
+def read_sender_name(api_key: str, file_bytes: bytes, media_type: str,
+                     attachment_name: str) -> str:
+    """
+    Ask who sent a particular attachment in a group-chat screenshot.
+
+    Last resort, used only when nothing else produced a donor. In a group chat
+    the donor's name is printed above their message rather than written in it,
+    and the main extraction sees that as "no donor stated" and returns nothing.
+    Asked on its own, this narrow question answers reliably.
+
+    Returns "" for a 1:1 chat (no sender label is shown - the name, if any, is
+    in the message text, which the main extraction already handles) or when the
+    label genuinely isn't legible.
+    """
+    client = _get_client(api_key)
+    block_type = "document" if media_type == "application/pdf" else "image"
+    msg = client.messages.create(
+        model=MODEL,
+        max_tokens=60,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": block_type, "source": {"type": "base64", "media_type": media_type,
+                                                "data": base64.b64encode(file_bytes).decode()}},
+                {"type": "text", "text":
+                    f"In this chat screenshot, find the message containing the attachment named "
+                    f"'{attachment_name}'. Who SENT that message? In a group chat the sender's "
+                    f"name is printed above their message, usually in colour. Reply with ONLY "
+                    f"that person's name, exactly as written. If the message is from the user "
+                    f"themselves (right-hand side, no name shown) reply ME. If you cannot see "
+                    f"it reply UNKNOWN."},
+            ],
+        }],
+    )
+    out = msg.content[0].text.strip().strip('"').splitlines()[0].strip()
+    if not out or out.upper().startswith(("UNKNOWN", "ME")):
+        return ""
+    # A sender label is short; anything longer is the model explaining itself
+    return out if len(out) <= 60 else ""
+
+
 def extract_donation(api_key: str, file_bytes: bytes, media_type: str,
                      whatsapp_text: str) -> dict:
     """
@@ -203,9 +244,30 @@ def extract_donation_multi(api_key: str, files: list, whatsapp_text: str,
                        "data": base64.b64encode(f["bytes"]).decode()},
         })
 
+    focus = ""
+    if primary_name:
+        focus = (
+            "\n\nTHIS REQUEST IS ABOUT THE BANK SLIP NAMED: " + primary_name + "\n"
+            "A conversation screenshot may show SEVERAL people's donations - different senders, "
+            "different attachments, different days. Find the message that sent THAT file (its "
+            "name is displayed under the attachment) and take the sender name shown above that "
+            "message as the donor. Ignore the other messages and attachments in the screenshot."
+        )
+
+    # When nothing is typed in, say so in a way that points at the attachments.
+    # Saying "(none provided)" led the model to conclude no donor message existed
+    # at all and return no donor - even with a screenshot of the conversation
+    # attached, which was exactly where the name was.
+    if whatsapp_text:
+        typed = "WhatsApp message text from donor (typed in by a volunteer):\n" + whatsapp_text
+    else:
+        typed = ("No message text was typed in. If any attachment above is a screenshot of a "
+                 "conversation, READ THE MESSAGES IN IT - that is where the donor's name and "
+                 "purpose are. Do not report the donor as unknown without reading it.")
+
     content.append({
         "type": "text",
-        "text": f"WhatsApp message text from donor:\n{whatsapp_text or '(none provided)'}\n\n{EXTRACTION_PROMPT}",
+        "text": typed + focus + "\n\n" + EXTRACTION_PROMPT,
     })
 
     message = client.messages.create(
