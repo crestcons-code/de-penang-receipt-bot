@@ -9,3 +9,11 @@ pyyaml>=6.0
 gspread>=6.0
 google-auth>=2.30
 anthropic>=0.40
+
+# Streamlit 1.61's gzip middleware subclasses Starlette's GZipResponder, and
+# Starlette 1.4.0 added a required `thread_minimum_size` argument to it. The
+# combination 500s on every request before any app code runs:
+#   TypeError: GZipResponder.__init__() missing 1 required keyword-only
+#   argument: 'thread_minimum_size'
+# Pinned until Streamlit ships a version compatible with Starlette 1.4.
+starlette<1.4
