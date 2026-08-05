@@ -221,6 +221,19 @@ def _parse_amount(val) -> float:
         return 0.0
 
 
+# Words that appear in donor records without identifying anyone - the temple's
+# own group prefix, "& family" variants, and titles. Stripping them lets the same
+# person match themselves across the different ways volunteers write them.
+_DONOR_STOPWORDS = {"de", "dep", "and", "n", "family", "famly", "fam", "families",
+                    "the", "mr", "mrs", "ms", "madam", "mdm"}
+
+
+def _norm_donor_key(name: str) -> str:
+    """Reduce a donor name to comparable letters only, e.g. 'DE Chia Yee' -> 'chiayee'."""
+    tokens = re.split(r"[^a-z0-9]+", str(name or "").lower())
+    return "".join(t for t in tokens if t and t not in _DONOR_STOPWORDS)
+
+
 def _gl_display(gl_code: str) -> str:
     """Return the GL_OPTIONS key string for a given GL code, or bare code if unknown."""
     short = GL_SHORT_DESC.get(gl_code)
@@ -2043,6 +2056,7 @@ with tab_entry:
                             _entry_client, _gs_cfg_entry["spreadsheet_id"], exclude_tab=_target_tab)
                 phone_book = st.session_state["entry_phone_book"]
                 phone_choices = [p[0] for p in phone_book]
+                _phone_norm_choices = [_norm_donor_key(c) for c in phone_choices]
 
                 # Read every file on its own first, then work out which chat
                 # screenshot belongs to which slip. Reading them separately is what
@@ -2154,18 +2168,26 @@ with tab_entry:
                     if not result.get("mobile") and phone_choices:
                         donor_names = [d.get("name", "") for d in result.get("donors", []) if d.get("name")]
                         for dn in donor_names:
-                            # High cutoff deliberately - a wrong phone suggestion is worse
-                            # than no suggestion (tested: 85 gave false positives on
-                            # unrelated names sharing a common word; 92 only fires on
-                            # near-exact/exact name matches). processor=default_process
-                            # is REQUIRED - without it, case differences alone (e.g.
-                            # "Lim Poh Tee" vs "LIM POH TEE") tank the score to ~45.
-                            match = process.extractOne(dn, phone_choices, scorer=fuzz.WRatio,
-                                                       processor=fuzz_utils.default_process, score_cutoff=92)
+                            # Try the normalised form first - it strips the punctuation,
+                            # spacing and boilerplate that stop the same person matching
+                            # themselves. "DE Chia Yee" and her record "Chiayee & family"
+                            # both reduce to "chiayee"; plain fuzzy scored her at 86 and
+                            # ranked a DIFFERENT donor above her.
+                            match = process.extractOne(_norm_donor_key(dn), _phone_norm_choices,
+                                                       scorer=fuzz.ratio, score_cutoff=95)
+                            # Fall back to whole-string fuzzy. High cutoff deliberately -
+                            # a wrong phone suggestion is worse than none (tested: 85 gave
+                            # false positives on unrelated names sharing a common word).
+                            # processor=default_process is REQUIRED - without it, case
+                            # alone ("Lim Poh Tee" vs "LIM POH TEE") tanks the score to ~45.
+                            if not match:
+                                match = process.extractOne(dn, phone_choices, scorer=fuzz.WRatio,
+                                                           processor=fuzz_utils.default_process, score_cutoff=92)
                             if match:
-                                matched_text, score, m_idx = match
+                                _, score, m_idx = match
                                 result["mobile"] = phone_book[m_idx][1]
-                                result["notes"] = (result.get("notes", "") + " | " if result.get("notes") else "") +                                     f"Mobile suggested from past donor record '{matched_text}' (score {score:.0f}) - please verify"
+                                result["notes"] = (result.get("notes", "") + " | " if result.get("notes") else "") + \
+                                    f"Mobile suggested from past donor record '{phone_choices[m_idx]}' (score {score:.0f}) - please verify"
                                 break
 
                     extracted.append(result)
