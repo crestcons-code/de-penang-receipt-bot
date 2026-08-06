@@ -18,6 +18,8 @@ from google_sheets_client import (
     read_dana_list as gs_read_dana_list,
     list_tabs as gs_list_tabs,
     write_or_numbers as gs_write_or_numbers,
+    save_or_batch as gs_save_or_batch,
+    list_or_batches as gs_list_or_batches,
 )
 
 st.set_page_config(page_title="DE Penang Autocount Donation Receipts Apps", page_icon="ðŸ¦", layout="wide")
@@ -670,6 +672,29 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
                 "_sheet_row":      row.get("_sheet_row"),
             })
         st.session_state["dana_post_results"] = _post_rows(post_items, existing_or_numbers)
+
+        # Record the batch so it can be found again later - tomorrow, or from
+        # another PC - when someone goes to print these receipts in Autocount.
+        # Autocount's API cannot print, so the app's job is to make the batch
+        # easy to pull up again rather than to reproduce the document.
+        try:
+            _gs_batch = get_google_sheets_config()
+            if _gs_batch.get("service_account_info") and _gs_batch.get("spreadsheet_id"):
+                _ok_rows = [r for r in st.session_state["dana_post_results"] if r["Status"] == "success"]
+                if _ok_rows:
+                    import datetime as _dtb
+                    _batch_id = _dtb.datetime.now().strftime("B%Y%m%d-%H%M")
+                    gs_save_or_batch(
+                        gs_get_client(_gs_batch["service_account_info"]),
+                        _gs_batch["spreadsheet_id"], _batch_id, _current_user,
+                        [{"or_number": r["Doc No"], "date": r["Date"], "donor": r["Donor"],
+                          "amount": r["Amount"], "gl": r["GL"], "description": r["Description"],
+                          "whatsapp": r.get("WhatsApp", "")} for r in _ok_rows],
+                    )
+                    st.session_state["dana_last_batch_id"] = _batch_id
+        except Exception as _be:
+            st.warning(f"Posted successfully, but could not save the batch record: {_be}")
+
         _sheet_writeback = st.session_state.get("dana_sheet_writeback")
         if _sheet_writeback:
             # A single sheet row can produce MULTIPLE OR numbers (e.g. a "split"
@@ -747,6 +772,22 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
                 except Exception as e:
                     st.error(f"Could not reach Autocount right now: {e}\n\nPlease wait a moment and try the retry again.")
                 st.rerun()
+
+        # Printing happens in Autocount - it has no print API - so hand over the
+        # OR numbers in the forms its print dialog accepts, rather than making
+        # someone read them off the table and retype them.
+        _ok_docs = [r["Doc No"] for r in results if r["Status"] == "success" and r.get("Doc No")]
+        if _ok_docs:
+            _bid = st.session_state.get("dana_last_batch_id")
+            st.success(f"Batch saved as **{_bid}**." if _bid else "Posted.")
+            with st.expander(f"🖨️ Print these {len(_ok_docs)} receipt(s) in Autocount", expanded=True):
+                st.caption("Open Autocount → Official Receipt → Print, and paste one of these:")
+                _nums = sorted(_ok_docs)
+                st.text_input("Range (if the numbers run consecutively)",
+                              value=f"{_nums[0]} to {_nums[-1]}", key="print_range_hint")
+                st.text_area("Full list", value=chr(10).join(_nums), height=110, key="print_list_hint")
+                st.caption("Both boxes are selectable - click in, Ctrl+A, Ctrl+C. This batch stays "
+                           "available in the Print Batch OR tab, so it can be printed later too.")
 
         buf = io.BytesIO()
         df_results.to_excel(buf, index=False)
@@ -1669,6 +1710,34 @@ with tab_print:
     st.subheader("Print Batch OR — Lookup")
     st.caption("Fetch OR records posted in Autocount, to print in batch or download a donor list. "
                "Works for past postings too, not just the current session.")
+
+    # Batches saved at posting time - the quickest route back to "print exactly
+    # what we posted on Tuesday", without anyone remembering OR numbers.
+    with st.expander("📦 Load a saved posting batch"):
+        _gs_b = get_google_sheets_config()
+        if not (_gs_b.get("service_account_info") and _gs_b.get("spreadsheet_id")):
+            st.caption("Google Sheets isn't set up, so saved batches aren't available.")
+        else:
+            try:
+                _batches = gs_list_or_batches(gs_get_client(_gs_b["service_account_info"]),
+                                              _gs_b["spreadsheet_id"])
+            except Exception as _e:
+                _batches = []
+                st.warning(f"Could not read saved batches: {_e}")
+            if not _batches:
+                st.caption("No batches saved yet - one is recorded automatically each time you post.")
+            else:
+                _labels = {f"{b['batch']}  -  {b['count']} OR(s), posted {b['posted_at']} by {b['posted_by']}": b
+                           for b in _batches[:40]}
+                _pick = st.selectbox("Batch", list(_labels.keys()), key="or_batch_pick")
+                _b = _labels[_pick]
+                _sorted = sorted(_b["or_numbers"])
+                st.text_input("Range", value=f"{_sorted[0]} to {_sorted[-1]}" if _sorted else "",
+                              key="batch_range_hint")
+                st.text_area("OR numbers in this batch", value=chr(10).join(_sorted),
+                             height=110, key="batch_list_hint")
+                st.caption("Paste either into Autocount's print dialog, or use the search below "
+                           "to pull the records up here.")
 
     lookup_mode = st.radio("Search by:", ["Date Range", "OR Number(s)"], horizontal=True, key="lookup_mode")
     import datetime as _dt, re as _re7
