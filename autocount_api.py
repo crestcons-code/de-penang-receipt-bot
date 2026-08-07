@@ -63,67 +63,46 @@ class AutocountClient:
     def get_posted_receipts(self, from_date: str, to_date: str) -> list[dict]:
         """
         Return OR records whose docDate falls between from_date and to_date (YYYY-MM-DD).
-        The listing API ignores date filters, so this binary-searches the (roughly
-        chronological) pages to locate the range - works for any period, however old.
+
+        Uses the listing endpoint's own startDate/endDate filter and walks every
+        page of the result. An earlier version binary-searched the unfiltered
+        listing on the assumption it was roughly date-ordered, then read a couple
+        of pages either side. It is not: the listing runs in creation order, so a
+        receipt dated the 1st but entered on the 6th sits pages away from its
+        neighbours. That silently dropped 26 of March's 718 receipts - and
+        anything missed here looks UNPOSTED to the duplicate check, which is how
+        already-receipted donations reappeared in Step 2 ready to be posted twice.
+
         Returns list of dicts: {docNo, date, dealWith, amount}
         """
-        page_size = 100
-        r0 = self._get("/payment/listing", params={"page": 1, "pageSize": page_size, "docType": "OR"})
-        total  = r0.get("totalCount", r0.get("total", 0))
-        data0  = r0.get("data", [])
-        actual = len(data0) or page_size
-        last_page = max(1, -(-total // actual))
-
-        from_dt = from_date[:10]
-        to_dt   = to_date[:10]
-
-        _page_cache = {1: data0}
-        def _get_page(pg):
-            if pg not in _page_cache:
-                r = self._get("/payment/listing", params={"page": pg, "pageSize": page_size, "docType": "OR"})
-                _page_cache[pg] = r.get("data", [])
-            return _page_cache[pg]
-
-        def _dates(pg):
-            return [d["master"].get("docDate", "")[:10] for d in _get_page(pg)]
-
-        # First page that could contain the range (max date on page >= from_dt)
-        lo, hi, first_pg = 1, last_page, last_page + 1
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            ds = _dates(mid)
-            if ds and max(ds) >= from_dt:
-                first_pg = mid
-                hi = mid - 1
-            else:
-                lo = mid + 1
-
-        # Last page that could contain the range (min date on page <= to_dt)
-        lo, hi, last_pg = 1, last_page, 0
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            ds = _dates(mid)
-            if ds and min(ds) <= to_dt:
-                last_pg = mid
-                lo = mid + 1
-            else:
-                hi = mid - 1
-
-        results = []
-        if last_pg >= first_pg:
-            # +-2 page buffer in case a few records are slightly out of date order
-            for pg in range(max(1, first_pg - 2), min(last_page, last_pg + 2) + 1):
-                for d in _get_page(pg):
-                    m = d["master"]
-                    doc_date = m.get("docDate", "")[:10]
-                    if from_dt <= doc_date <= to_dt:
-                        results.append({
-                            "docNo":    m.get("docNo", ""),
-                            "date":     doc_date,
-                            "dealWith": (m.get("dealWith") or "").strip().upper(),
-                            "amount":   float(m.get("totalPayment") or 0),
-                        })
-
+        from_dt, to_dt = from_date[:10], to_date[:10]
+        results, page = [], 1
+        while True:
+            r = self._get("/payment/listing", params={
+                "page": page, "docType": "OR",
+                "startDate": from_dt, "endDate": to_dt,
+            })
+            data = r.get("data", [])
+            if not data:
+                break
+            for d in data:
+                m = d["master"]
+                doc_date = (m.get("docDate") or "")[:10]
+                # Trust but verify the server-side filter
+                if not (from_dt <= doc_date <= to_dt):
+                    continue
+                results.append({
+                    "docNo":    m.get("docNo", ""),
+                    "date":     doc_date,
+                    "dealWith": (m.get("dealWith") or "").strip().upper(),
+                    "amount":   float(m.get("totalPayment") or 0),
+                    "cancelled": bool(m.get("cancelled")),
+                })
+            page += 1
+            # A month of receipts is a few hundred; this only stops a runaway loop
+            # if the API ever ignores the page parameter.
+            if page > 200:
+                break
         return results
 
     # --------------------------------------------------------------- customers
