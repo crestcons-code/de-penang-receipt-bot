@@ -250,6 +250,45 @@ def load_dana_list(file, skip_blank_gl=True) -> pd.DataFrame:
     return _parse_dana_dataframe(df, skip_blank_gl)
 
 
+def _parse_sheet_date(raw):
+    """
+    Read a dana list date cell, returning 'YYYY-MM-DD' or None if unreadable.
+
+    Handles the case where a cell has lost its date formatting and holds Google
+    Sheets' raw serial number instead - "46024" is 2 Jan 2026, but read as text
+    it looks like the year 46024 and pandas raises, which used to abort the whole
+    tab and made a month impossible to load.
+    """
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+
+    # A bare integer in this band is a Sheets/Excel serial date, not a year.
+    # 20000 = 1954, 60000 = 2064 - anything outside that is not a date we expect.
+    if re.fullmatch(r"\d{5}", text):
+        serial = int(text)
+        if 20000 <= serial <= 60000:
+            return (pd.Timestamp("1899-12-30") + pd.Timedelta(days=serial)).strftime("%Y-%m-%d")
+        return None
+
+    # ISO first, and WITHOUT dayfirst: tabs pushed by this app are written as
+    # YYYY-MM-DD, and dayfirst turns 2026-01-02 into 1 February. Day-first is
+    # only applied to the slash/dot forms, which here always mean DD/MM/YYYY.
+    if re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}([ T].*)?", text):
+        try:
+            return pd.to_datetime(text).strftime("%Y-%m-%d")
+        except Exception:
+            return None
+
+    day_first = bool(re.fullmatch(r"\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}", text))
+    try:
+        return pd.to_datetime(text, dayfirst=day_first).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
 def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.DataFrame:
     """
     Core dana list parsing logic, shared by the Excel upload path and (later) a Google
@@ -275,6 +314,7 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
     col_mobile   = cols[11] if len(cols) > 11 else None
 
     rows = []
+    bad_dates = []
     blank_gl_count = [0]  # mutable counter
     for _, r in df.iterrows():
         amount = _parse_amount(r[col_amount])
@@ -285,7 +325,13 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
         raw_date = r[col_date]
         if pd.isna(raw_date):
             continue
-        txn_date = pd.to_datetime(raw_date).strftime("%Y-%m-%d")
+        txn_date = _parse_sheet_date(raw_date)
+        if not txn_date:
+            # One unreadable cell must not take down the whole month. Record it
+            # so the volunteer can be told which row to fix, and carry on.
+            bad_dates.append((int(r["_sheet_row"]) if "_sheet_row" in df.columns
+                              and pd.notna(r.get("_sheet_row")) else None, str(raw_date)[:30]))
+            continue
 
         # Donor name: col J (Donor name on Receipt) first, fall back to col D (Beneficiary)
         # Multi-donor cells have one donor per line - join them all onto the one receipt
@@ -434,7 +480,11 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
             "sheet_row":   sheet_row,
         })
 
-    return pd.DataFrame(rows), blank_gl_count[0]
+    out = pd.DataFrame(rows)
+    # Surfaced by the caller so a volunteer learns which cell to fix,
+    # rather than the rows just quietly going missing.
+    out.attrs["bad_date_rows"] = bad_dates
+    return out, blank_gl_count[0]
 
 
 def _post_rows(post_items: list, existing_or_numbers: set = None) -> list:
@@ -949,6 +999,14 @@ with tab_dana:
                         with st.spinner("Reading dana list from Google Sheets..."):
                             df_raw_sheet = gs_read_dana_list(gs_client, _gs_cfg["spreadsheet_id"], sheet_tab)
                             df_dana, blank_gl = _parse_dana_dataframe(df_raw_sheet, skip_blank_gl=True)
+                        _bad = df_dana.attrs.get("bad_date_rows") or []
+                        if _bad:
+                            _where = ", ".join(f"row {r}" for r, _v in _bad if r) or "unknown row(s)"
+                            st.warning(
+                                f"{len(_bad)} row(s) skipped - the date in column A can't be read ({_where}). "
+                                "Usually the cell has lost its date formatting and holds a raw number. "
+                                "Fix the date in the sheet and load again to include them."
+                            )
                         st.session_state["dana_from_sheet"] = (df_dana, blank_gl)
                         st.session_state["dana_sheet_writeback"] = {
                             "service_account_info": _gs_cfg["service_account_info"],
