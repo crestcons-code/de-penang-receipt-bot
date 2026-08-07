@@ -1,5 +1,7 @@
 # autocount_api.py - Autocount Cloud API wrapper
 
+import calendar
+import re
 import time
 import requests
 from config_loader import AUTOCOUNT
@@ -129,33 +131,35 @@ class AutocountClient:
 
     def get_last_or_number(self, prefix: str = "") -> str | None:
         """
-        Return the highest OR doc number matching prefix (e.g. 'OR-2606').
-        Gets total count, jumps to the last page, scans up to 10 pages backward.
-        Uses only ~11 API calls maximum.
-        """
-        page_size = 100
-        r0 = self._get("/payment/listing", params={"page": 1, "pageSize": page_size, "docType": "OR"})
-        total = r0.get("totalCount", r0.get("total", 0))
-        actual_per_page = len(r0.get("data", [])) or page_size
-        last_page = max(1, -(-total // actual_per_page))
+        Return the highest OR doc number matching prefix (e.g. 'OR-2602').
 
-        best = None
-        no_match_after_found = 0
-        for pg in range(last_page, max(0, last_page - 15), -1):
-            r = self._get("/payment/listing", params={"page": pg, "pageSize": page_size, "docType": "OR"})
-            docs = [d["master"]["docNo"] for d in r.get("data", [])
-                    if d["master"]["docNo"].startswith(prefix if prefix else "OR-")]
-            if docs:
-                candidate = sorted(docs)[-1]
-                if best is None or candidate > best:
-                    best = candidate
-                no_match_after_found = 0
-            else:
-                if best:
-                    no_match_after_found += 1
-                    if no_match_after_found >= 3:
-                        break
-        return best
+        Looks the month up by DATE. The previous version scanned the last 15
+        pages of the unfiltered listing hoping the prefix appeared there - but
+        that listing runs in creation order, so any month entered a while ago is
+        nowhere near the end and it returned None. The caller then assumed the
+        month was empty and started numbering at 001, proposing OR numbers that
+        Autocount had already issued.
+        """
+        m = re.match(r"^OR-(\d{2})(\d{2})$", (prefix or "").strip())
+        if not m:
+            return None
+        year = 2000 + int(m.group(1))
+        month = int(m.group(2))
+        first = f"{year:04d}-{month:02d}-01"
+        last_day = calendar.monthrange(year, month)[1]
+        last = f"{year:04d}-{month:02d}-{last_day:02d}"
+
+        best_num, best_doc = -1, None
+        for rec in self.get_posted_receipts(first, last):
+            doc = rec.get("docNo", "")
+            if not doc.startswith(prefix):
+                continue
+            # A reissued receipt can carry a suffix (OR-2602174-1); the sequence
+            # number is what matters for deciding the next one.
+            mm = re.match(rf"^{re.escape(prefix)}(\d{{3}})", doc)
+            if mm and int(mm.group(1)) > best_num:
+                best_num, best_doc = int(mm.group(1)), f"{prefix}{mm.group(1)}"
+        return best_doc
 
     def _next_or_doc_no(self, receipt_date: str, offset: int = 0) -> str:
         """

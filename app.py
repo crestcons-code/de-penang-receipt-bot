@@ -1069,8 +1069,14 @@ with tab_dana:
                     used_nums = set()
                     for p in posted:
                         doc = p["docNo"]
-                        if doc.startswith(prefix) and doc[len(prefix):].isdigit():
-                            used_nums.add(int(doc[len(prefix):]))
+                        if not doc.startswith(prefix):
+                            continue
+                        # A reissued receipt carries a suffix (OR-2602174-1). Testing
+                        # the whole remainder with isdigit() rejected those, so 174
+                        # looked free and would have been handed out a second time.
+                        _m = re.match(r"^(\d{3})", doc[len(prefix):])
+                        if _m:
+                            used_nums.add(int(_m.group(1)))
                     gap_queue = [n for n in range(1, max_used) if n not in used_nums]
 
                     next_seq = max_used + 1
