@@ -1083,10 +1083,21 @@ with tab_dana:
                     last_or = client_pre.get_last_or_number(prefix=prefix)
                     max_used = int(last_or[len(prefix):]) if (last_or and last_or.startswith(prefix)) else 0
 
+                    # Which numbers are taken must be judged over the WHOLE month,
+                    # not the dates the sheet happens to cover. OR-2608049 was
+                    # issued on the spot for a 7 August donation while the sheet
+                    # only ran to the 6th - so it fell outside the fetch, looked
+                    # like a free gap, and was offered again.
+                    import calendar as _cal
+                    _y, _mn = 2000 + int(yy), int(mm)
+                    posted_month = client_pre.get_posted_receipts(
+                        f"{_y:04d}-{_mn:02d}-01",
+                        f"{_y:04d}-{_mn:02d}-{_cal.monthrange(_y, _mn)[1]:02d}")
+
                     # Find any gap numbers (missing OR-YYMMNNN) within this month's range so they
                     # get backfilled automatically instead of creating new gaps further down.
                     used_nums = set()
-                    for p in posted:
+                    for p in posted_month:
                         doc = p["docNo"]
                         if not doc.startswith(prefix):
                             continue
