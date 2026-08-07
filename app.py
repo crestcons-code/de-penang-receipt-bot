@@ -454,7 +454,12 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
             split_flag = str(r[col_split]).strip().upper() == "SPLIT"
 
         if split_flag and detail_lines:
-            for dl in detail_lines:
+            # One bank-in, several receipts: they share ONE sequence number and are
+            # told apart by a suffix - OR-2607470-1 ... OR-2607470-12 - which is how
+            # these have always been numbered by hand here, and keeps the bank
+            # reconciliation tied to a single number per payment.
+            _split_group = f"{sheet_row}-{txn_date}-{amount}"
+            for _i, dl in enumerate(detail_lines, start=1):
                 # Mobile numbers are listed one per ORIGINAL numbered line - two
                 # donors sharing one line (e.g. "6. A RM20, B RM20") share that
                 # line's number. Falls back to the combined string if the mobile
@@ -473,6 +478,9 @@ def _parse_dana_dataframe(df: pd.DataFrame, skip_blank_gl: bool = True) -> pd.Da
                     "amount":      dl["amount"],
                     "mobile":      dl_mobile,
                     "sheet_row":   sheet_row,
+                    "split_group": _split_group,
+                    "split_seq":   _i,
+                    "split_total": len(detail_lines),
                 })
             continue
 
@@ -1133,6 +1141,7 @@ with tab_dana:
             return None
 
         rows = []
+        split_bases = {}    # split group -> the one OR number its receipts hang off
         skipped_rows = []   # display info
         skipped_txns = []   # full txn data for potential re-include
         skipped_count = 0
@@ -1168,8 +1177,26 @@ with tab_dana:
 
             # Use pre-filled OR number, or fill a gap number first, then continue the sequence
             auto_assigned = not txn["or_number"]
+            # Ordinary rows carry NaN in this column, not None - and NaN is truthy,
+            # so testing it directly sends every normal row down the split path and
+            # crashes on int(NaN).
+            _sgroup = txn.get("split_group")
+            if not isinstance(_sgroup, str) or not _sgroup.strip():
+                _sgroup = None
             if txn["or_number"]:
                 or_no = txn["or_number"]
+            elif _sgroup:
+                # All receipts from one bank-in hang off a single sequence number,
+                # suffixed -1, -2, ... - so twelve donors consume one number, not
+                # twelve, and the payment still reconciles against one OR.
+                if _sgroup not in split_bases:
+                    t_yy, t_mm = txn_date[2:4], txn_date[5:7]
+                    if gap_queue:
+                        split_bases[_sgroup] = f"OR-{t_yy}{t_mm}{gap_queue.pop(0):03d}"
+                    else:
+                        split_bases[_sgroup] = f"OR-{t_yy}{t_mm}{seq:03d}"
+                        seq += 1
+                or_no = f"{split_bases[_sgroup]}-{int(txn['split_seq'])}"
             else:
                 t_yy, t_mm = txn_date[2:4], txn_date[5:7]
                 if gap_queue:
