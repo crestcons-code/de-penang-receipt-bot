@@ -1225,11 +1225,28 @@ with tab_dana:
             # reliably handled by the exact/prefix check above, and fuzzy-matching
             # short names risks false positives as seen elsewhere in this app).
             possible_dup = ""
-            if len(donor_key) >= 50:
-                for p in _by_date_amt.get((txn_date, amount), []):
-                    dw = p.get("dealWith", "")
-                    if not dw:
-                        continue
+            for p in _by_date_amt.get((txn_date, amount), []):
+                dw = (p.get("dealWith", "") or "").strip()
+                if not dw:
+                    continue
+
+                # Autocount's stored name is often a SHORTER form of the sheet's:
+                # only the first of several donors, or a hand-shortened version -
+                # "SADDHA GROUP" against "Sadha Group - Pa Auk July to Dec 2026".
+                # Whole-string scoring rates that no higher than genuinely
+                # different people (both about 86), but partial matching separates
+                # them cleanly: 96 here versus 64 for an unrelated donor. The
+                # 8-character floor stops a very short stored name matching
+                # anything that happens to contain it.
+                if len(dw) >= 8:
+                    pscore = fuzz.partial_ratio(donor_key, dw, processor=fuzz_utils.default_process)
+                    if pscore >= 95:
+                        possible_dup = f"{p['docNo']} (looks like '{dw[:40]}') - verify before posting"
+                        break
+
+                # Long reformatted blobs, where even the wording was rearranged
+                # when it was first posted.
+                if len(donor_key) >= 50:
                     fscore = fuzz.WRatio(donor_key, dw, processor=fuzz_utils.default_process)
                     if fscore >= 75:
                         possible_dup = f"{p['docNo']} ({fscore:.0f}% similar) - verify before posting"
