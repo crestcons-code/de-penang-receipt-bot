@@ -1132,10 +1132,14 @@ with tab_dana:
         def _norm_ws(s):
             return _re8.sub(r"\s+", " ", s).strip()
 
+        _claimed_docs = set()   # receipts already accounted for by an earlier row
+
         def _find_duplicate(date_, amount_, donor_key_):
             donor_norm = _norm_ws(donor_key_)
             donor_key2 = _donor_match_key(donor_key_)
             for p in _by_date_amt.get((date_, amount_), []):
+                if p["docNo"] in _claimed_docs:
+                    continue
                 dw = p.get("dealWith", "")
                 dw_norm = _norm_ws(dw)
                 if dw == donor_key_ or dw_norm == donor_norm:
@@ -1156,13 +1160,27 @@ with tab_dana:
         skipped_rows = []   # display info
         skipped_txns = []   # full txn data for potential re-include
         skipped_count = 0
-        seq = next_seq
+        # First pass: settle which sheet row corresponds to which receipt, claiming
+        # each one as it goes. Only then is it possible to say a receipt at some
+        # date+amount is UNACCOUNTED FOR - which is the strongest evidence that a
+        # row was already posted, even when the two names look nothing alike.
+        _dup_by_row = []
         for _, txn in df_dana.iterrows():
+            _d = _find_duplicate(txn["date"], round(float(txn["amount"]), 2),
+                                 str(txn["donor_name"]).strip().upper())
+            if _d is not None:
+                _claimed_docs.add(_d["docNo"])
+            elif txn["or_number"] and txn["or_number"] in posted_or_numbers:
+                _claimed_docs.add(txn["or_number"])
+            _dup_by_row.append(_d)
+
+        seq = next_seq
+        for _row_i, (_, txn) in enumerate(df_dana.iterrows()):
             txn_date = txn["date"]
             amount   = round(float(txn["amount"]), 2)
             donor_key = str(txn["donor_name"]).strip().upper()
 
-            dup = _find_duplicate(txn_date, amount, donor_key)
+            dup = _dup_by_row[_row_i]
             if dup is not None:
                 skipped_count += 1
                 if txn["or_number"] and txn["or_number"] != dup["docNo"] and \
@@ -1225,7 +1243,28 @@ with tab_dana:
             # reliably handled by the exact/prefix check above, and fuzzy-matching
             # short names risks false positives as seen elsewhere in this app).
             possible_dup = ""
-            for p in _by_date_amt.get((txn_date, amount), []):
+
+            # Strongest signal, and it needs no name at all: a receipt exists for
+            # this exact date AND amount that no other row accounts for. That is
+            # how three June donations were missed - RM1,560 and RM1,040 each
+            # occur once in the whole month, and RM50 on the 22nd - while their
+            # names bore no resemblance ("Sayalay Khema (RM600)..." in the sheet
+            # against "OBH BE CHIA YEE" in Autocount).
+            _spare = [p for p in _by_date_amt.get((txn_date, amount), [])
+                      if p["docNo"] not in _claimed_docs]
+            if _spare:
+                # Where several rows share a date and amount, point at the receipt
+                # whose name is closest rather than whichever came first, so the
+                # message is worth reading.
+                _best = max(_spare, key=lambda p: fuzz.partial_ratio(
+                    donor_key, (p.get("dealWith", "") or ""), processor=fuzz_utils.default_process))
+                _claimed_docs.add(_best["docNo"])   # one row per receipt
+                _dwx = (_best.get("dealWith", "") or "").strip()
+                possible_dup = (f"{_best['docNo']} - same date and amount"
+                                + (f", posted as '{_dwx[:34]}'" if _dwx else "")
+                                + " - verify before posting")
+
+            for p in [] if possible_dup else _by_date_amt.get((txn_date, amount), []):
                 dw = (p.get("dealWith", "") or "").strip()
                 if not dw:
                     continue
