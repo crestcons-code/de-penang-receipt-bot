@@ -1096,6 +1096,23 @@ with tab_dana:
                         _m = re.match(r"^(\d{3})", doc[len(prefix):])
                         if _m:
                             used_nums.add(int(_m.group(1)))
+
+                    # Also treat every number the SHEET already claims as taken.
+                    # Volunteers issue receipts directly in Autocount when someone
+                    # is standing there waiting, and the number reaches one place
+                    # before the other - so a number can be live in the sheet while
+                    # this month's Autocount fetch has yet to show it. Trusting
+                    # Autocount alone would hand the same number out twice.
+                    for _g in df_dana["or_number"]:
+                        _g = str(_g or "").strip()
+                        if not _g.startswith(prefix):
+                            continue
+                        _mg = re.match(r"^(\d{3})", _g[len(prefix):])
+                        if _mg:
+                            used_nums.add(int(_mg.group(1)))
+
+                    if used_nums:
+                        max_used = max(max_used, max(used_nums))
                     gap_queue = [n for n in range(1, max_used) if n not in used_nums]
 
                     next_seq = max_used + 1
