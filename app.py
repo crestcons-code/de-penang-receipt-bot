@@ -609,8 +609,10 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
         return
 
     # Tick All / Untick All buttons
+    # None = leave each row's own default alone (possible duplicates start
+    # unticked); True/False only after the volunteer presses one of the buttons.
     if "post_all" not in st.session_state:
-        st.session_state.post_all = True
+        st.session_state.post_all = None
 
     btn_col, spacer = st.columns([3, 13])
     with btn_col:
@@ -623,7 +625,16 @@ def render_review_and_post(rows: list, skipped_count: int = 0, existing_or_numbe
             st.rerun()
 
     df_rows = pd.DataFrame(rows)
-    df_rows["Post"] = st.session_state.post_all
+    if st.session_state.post_all is not None:
+        df_rows["Post"] = st.session_state.post_all
+
+    _dup_unticked = int((~df_rows["Post"].astype(bool) & (
+        df_rows.get("Possible Duplicate", pd.Series([""] * len(df_rows))).astype(str).str.strip() != ""
+    )).sum()) if "Possible Duplicate" in df_rows.columns else 0
+    if _dup_unticked:
+        st.warning(f"{_dup_unticked} row(s) look like something already posted and have been "
+                   "left UNTICKED. Check the ⚠️ Possible Duplicate column - tick any you have "
+                   "verified is genuinely a separate donation.")
 
     # Put Possible Duplicate right after OR Number for visibility; keep every
     # other column (including hidden ones like _details) in its original order.
@@ -1225,7 +1236,12 @@ with tab_dana:
                         break
 
             rows.append({
-                "Post":           True,
+                # A row flagged as a possible duplicate starts UNTICKED. It is only
+                # a resemblance, not proof, so the row stays visible and can be
+                # ticked back on - but posting it has to be a deliberate act,
+                # because the cost of a wrong duplicate receipt is higher than the
+                # cost of a second look.
+                "Post":           not possible_dup,
                 "OR Number":      or_no,
                 "Date":           txn_date,
                 "Donor Name":     txn["donor_name"],
