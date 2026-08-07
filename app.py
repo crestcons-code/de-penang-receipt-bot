@@ -228,6 +228,18 @@ _DONOR_STOPWORDS = {"de", "dep", "and", "n", "family", "famly", "fam", "families
                     "the", "mr", "mrs", "ms", "madam", "mdm"}
 
 
+def _donor_match_key(name: str) -> str:
+    """
+    Compare donor names ignoring punctuation and spacing, keeping letters (any
+    script, so Chinese names survive) and digits.
+
+    "CAREELEC SDN. BHD." in the sheet and "CAREELEC SDN BHD" in Autocount are the
+    same donor, but comparing on whitespace alone made them differ - so a receipt
+    already issued was offered up to be posted a second time.
+    """
+    return re.sub(r"[^0-9A-Za-z一-鿿]+", "", str(name or "")).upper()
+
+
 def _norm_donor_key(name: str) -> str:
     """Reduce a donor name to comparable letters only, e.g. 'DE Chia Yee' -> 'chiayee'."""
     tokens = re.split(r"[^a-z0-9]+", str(name or "").lower())
@@ -1097,10 +1109,15 @@ with tab_dana:
 
         def _find_duplicate(date_, amount_, donor_key_):
             donor_norm = _norm_ws(donor_key_)
+            donor_key2 = _donor_match_key(donor_key_)
             for p in _by_date_amt.get((date_, amount_), []):
                 dw = p.get("dealWith", "")
                 dw_norm = _norm_ws(dw)
                 if dw == donor_key_ or dw_norm == donor_norm:
+                    return p
+                # Same donor punctuated differently ("SDN. BHD." vs "SDN BHD") is
+                # still the same receipt, and must not be posted a second time.
+                if donor_key2 and donor_key2 == _donor_match_key(dw):
                     return p
                 # Autocount truncates DealWith around 100 chars for long multi-donor
                 # entries (sometimes trimming a trailing char too, so allow 90-100)
@@ -1433,6 +1450,8 @@ with tab_recon:
                     dw = p.get("dealWith", "")
                     dw_norm = _norm_ws2(dw)
                     if dw == donor_key_ or dw_norm == donor_norm or \
+                       (_donor_match_key(donor_key_) and
+                        _donor_match_key(donor_key_) == _donor_match_key(dw)) or \
                        (90 <= len(dw) <= 100 and donor_norm.startswith(dw_norm)):
                         return p
                 return None
