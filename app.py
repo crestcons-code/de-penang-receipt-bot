@@ -1194,13 +1194,25 @@ with tab_dana:
                 skipped_txns.append(txn)
                 continue
 
-            # Pre-filled OR number exists in Autocount but date/amount/donor didn't
-            # match above (e.g. donor name was edited) - still treat as posted
-            if txn["or_number"] and txn["or_number"] in posted_or_numbers:
+            # Anything written in column G means the row has already been dealt
+            # with. Checked against the real sheets: of 3,410 rows carrying a
+            # value there, only 15 were absent from Autocount, and every one of
+            # those was a note rather than a pending number - "Boon Kang issued",
+            # "Refund", a hand-written range. Nobody fills column G before
+            # posting, so a value there is a record, not an intention.
+            #
+            # Skipped, not dropped: the row is listed below with its reason and
+            # can be ticked to re-include, reusing its own number.
+            if txn["or_number"]:
                 skipped_count += 1
+                if txn["or_number"] in posted_or_numbers:
+                    _reason = "OR number already in Autocount"
+                else:
+                    _reason = (f"Column G already filled ('{str(txn['or_number'])[:26]}') - not found "
+                               "in Autocount; tick to re-include if it still needs posting")
                 skipped_rows.append({"Re-post?": False, "OR Number": txn["or_number"], "Date": txn_date,
                                      "Donor": txn["donor_name"], "Amount (RM)": amount,
-                                     "Reason": "OR number already in Autocount"})
+                                     "Reason": _reason})
                 skipped_txns.append(txn)
                 continue
 
